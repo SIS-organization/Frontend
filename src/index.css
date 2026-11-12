@@ -1,0 +1,18 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter Variable", system-ui, sans-serif;
+  --color-bg: #f5f6f2;
+  --color-sidebar: #0b202a;
+  --color-primary: #145e63;
+  --color-lime: #d5f477;
+  --color-heading: #152f38;
+  --color-muted: #61737a;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-heading);
+  font-family: var(--font-sans);
+}

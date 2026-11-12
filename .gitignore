@@ -1,0 +1,31 @@
+# Dependințe și cache Vite
+node_modules/
+.vite/
+
+# Fișiere generate la build (npm run build)
+dist/
+dist-ssr/
+*.local
+
+# Fișiere temporare TypeScript
+*.tsbuildinfo
+
+# Variabile de mediu (ignoră cheile locale, dar păstrează modelul)
+.env
+.env.*
+!.env.example
+
+# Log-uri
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Sistem de operare și editoare
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
+personal.md
+design.txt
