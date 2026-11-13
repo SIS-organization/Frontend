@@ -1,21 +1,71 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import Button from "../components/common/Button";
 import TimeGrid from "../components/booking/TimeGrid";
-import { facilities } from "../mock/data";
+import { getFacilities, getFacilityAvailability, type FacilityAvailability } from "../api/facilities";
 import { useBookings } from "../context/BookingsContext";
-import type { Booking } from "../types";
-import { formatDate, hourLabel, weekDays } from "../utils/dates";
+import type { Booking, Facility } from "../types";
+import { formatDate, hourLabel, slotKey, toISO, weekDays } from "../utils/dates";
+
+const messageOf = (err: unknown, fallback: string) => (err instanceof Error ? err.message : fallback);
 
 export default function FacilityDetailPage() {
   const { id } = useParams();
-  const facility = facilities.find((f) => f.id === Number(id));
+  const facilityId = Number(id);
   const { addBooking } = useBookings();
+
+  // undefined = se încarcă, null = nu există
+  const [facility, setFacility] = useState<Facility | null | undefined>(undefined);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [offset, setOffset] = useState(0);
+  const [slots, setSlots] = useState<Record<string, FacilityAvailability>>({});
+  const [reload, setReload] = useState(0);
   const [selected, setSelected] = useState<{ date: string; hour: number } | null>(null);
   const [confirmed, setConfirmed] = useState<Booking | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  if (!facility) {
+  const days = useMemo(() => weekDays(offset), [offset]);
+
+  useEffect(() => {
+    let active = true;
+    getFacilities()
+      .then((list) => {
+        if (active) setFacility(list.find((f) => f.id === facilityId) ?? null);
+      })
+      .catch((err) => {
+        if (active) setLoadError(messageOf(err, "Nu s-a putut încărca facilitatea."));
+      });
+    return () => {
+      active = false;
+    };
+  }, [facilityId]);
+
+  useEffect(() => {
+    let active = true;
+    getFacilityAvailability(facilityId, toISO(days[0]), toISO(days[6]))
+      .then((items) => {
+        if (active) setSlots(Object.fromEntries(items.map((s) => [slotKey(s.date, s.hour), s])));
+      })
+      .catch((err) => {
+        if (active) setError(messageOf(err, "Nu s-a putut încărca disponibilitatea."));
+      });
+    return () => {
+      active = false;
+    };
+  }, [facilityId, days, reload]);
+
+  if (loadError) {
+    return (
+      <p>
+        {loadError} <Link to="/" className="text-primary underline">Înapoi la facilități</Link>
+      </p>
+    );
+  }
+
+  if (facility === undefined) return <p className="text-muted">Se încarcă…</p>;
+
+  if (facility === null) {
     return (
       <p>
         Facilitatea nu există. <Link to="/" className="text-primary underline">Înapoi la facilități</Link>
@@ -25,9 +75,18 @@ export default function FacilityDetailPage() {
 
   const confirm = async () => {
     if (!selected) return;
-    const b = await addBooking({ facilityId: facility.id, facilityName: facility.name, ...selected });
-    setConfirmed(b);
-    setSelected(null);
+    setSaving(true);
+    setError(null);
+    try {
+      const b = await addBooking({ facilityId: facility.id, facilityName: facility.name, ...selected });
+      setConfirmed(b);
+    } catch (err) {
+      setError(messageOf(err, "Rezervarea nu a putut fi făcută."));
+    } finally {
+      setSelected(null);
+      setSaving(false);
+      setReload((r) => r + 1); // reîncarcă disponibilitatea
+    }
   };
 
   return (
@@ -44,18 +103,28 @@ export default function FacilityDetailPage() {
             <Button variant="outline" onClick={() => setOffset(offset + 1)} aria-label="Săptămâna următoare">→</Button>
           </div>
           <TimeGrid
-            facilityId={facility.id}
-            days={weekDays(offset)}
+            days={days}
+            slots={slots}
             selected={selected}
-            onSelect={(date, hour) => { setConfirmed(null); setSelected({ date, hour }); }}
+            onSelect={(date, hour) => {
+              setConfirmed(null);
+              setError(null);
+              setSelected({ date, hour });
+            }}
           />
           <p className="mt-4 text-xs text-muted">
             Legendă: alb = liber, verde închis = ales, gri = ocupat, albastru = curs USV, galben = mentenanță.
+            {facility.capacity && facility.capacity > 1 ? " La acest bazin, „3/4 locuri” înseamnă câte culoare mai sunt libere." : ""}
           </p>
         </section>
 
         <aside className="flex flex-col gap-4">
           <div className="rounded-xl border border-gray-200 bg-white p-4">
+            {error && (
+              <p role="alert" className="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+                {error}
+              </p>
+            )}
             {confirmed ? (
               <>
                 <h2 className="mb-1 font-semibold">Rezervare confirmată</h2>
@@ -71,7 +140,9 @@ export default function FacilityDetailPage() {
                 <p className="mb-4 text-sm text-muted">
                   {formatDate(selected.date)}, {hourLabel(selected.hour)}–{hourLabel(selected.hour + 1)}
                 </p>
-                <Button className="w-full" onClick={confirm}>Confirmă rezervarea</Button>
+                <Button className="w-full" onClick={confirm} disabled={saving}>
+                  {saving ? "Se rezervă…" : "Confirmă rezervarea"}
+                </Button>
               </>
             ) : (
               <p className="text-sm text-muted">Alege un interval liber din calendar.</p>

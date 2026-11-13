@@ -17,13 +17,18 @@ Frontend-ul aplicației pentru facilitățile sportive USV, cu rezervări, dispo
 - npm
 
 
-## Endpoint-uri principale
+## Conectare la backend
 
-Fluxul de rezervare este construit pe următoarele endpoint-uri:
+1. Pornește backend-ul (vezi README-ul din repository-ul Backend): `http://localhost:8000`.
+2. Copiază `.env.example` ca `.env` (implicit folosește backend-ul real, utilizatorul cu id 1).
+3. `npm install`, apoi `npm run dev` și deschide http://localhost:5173.
 
-- `GET /users/me/quota`
+## Endpoint-uri folosite (prefix `/v1`)
+
 - `GET /facilities`
-- `GET /facilities/:id/availability?date=YYYY-MM-DD`
+- `GET /facilities/{id}/availability?from=YYYY-MM-DD&to=YYYY-MM-DD`
+- `GET /bookings?scope=all&pageSize=100`
 - `POST /bookings`
-- `GET /bookings/:id`
+- `POST /bookings/{id}/cancel`
 
+Până la autentificarea JWT, utilizatorul este trimis prin antetul `X-User-Id` (`VITE_USER_ID`).
