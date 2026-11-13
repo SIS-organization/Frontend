@@ -1,59 +1,59 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
-import { createBooking } from "../api/bookings";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { cancelBookingRequest, createBooking, getMyBookings } from "../api/bookings";
 import type { Booking } from "../types";
-import { toISO } from "../utils/dates";
 
 type NewBooking = Pick<Booking, "facilityId" | "facilityName" | "date" | "hour">;
 
 type Ctx = {
   bookings: Booking[];
+  loading: boolean;
+  error: string | null;
   addBooking: (data: NewBooking) => Promise<Booking>;
-  cancelBooking: (id: string) => void;
+  cancelBooking: (id: string) => Promise<void>;
 };
 
 const BookingsContext = createContext<Ctx | null>(null);
 
-const inDays = (n: number) => {
-  const d = new Date();
-  d.setDate(d.getDate() + n);
-  return toISO(d);
-};
-
-const initial: Booking[] = [
-  { id: "b1", facilityId: 2, facilityName: "Sală fitness", date: inDays(2), hour: 17, status: "upcoming", code: "USV-1042" },
-  { id: "b2", facilityId: 1, facilityName: "Teren de fotbal", date: inDays(-5), hour: 19, status: "past", code: "USV-0987" },
-];
-
 export function BookingsProvider({ children }: { children: ReactNode }) {
-  const [bookings, setBookings] = useState<Booking[]>(initial);
+  const [bookings, setBookings] = useState<Booking[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    getMyBookings()
+      .then((items) => {
+        if (!active) return;
+        setBookings(items);
+        setError(null);
+      })
+      .catch((err) => {
+        if (active) setError(err instanceof Error ? err.message : "Nu s-au putut încărca rezervările.");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const addBooking = async (data: NewBooking) => {
-    const payload = {
-      facilityId: data.facilityId,
-      facilityName: data.facilityName,
-      startsAt: `${data.date}T${String(data.hour).padStart(2, "0")}:00:00`,
-      endsAt: `${data.date}T${String(data.hour + 1).padStart(2, "0")}:00:00`,
-    };
-
-    const serverBooking = await createBooking(payload);
-    const b: Booking = {
-      id: serverBooking.id,
-      facilityId: serverBooking.facilityId,
-      facilityName: serverBooking.facilityName,
-      date: serverBooking.date,
-      hour: serverBooking.hour,
-      status: serverBooking.status,
-      code: serverBooking.code,
-    };
-
-    setBookings((prev) => [b, ...prev]);
-    return b;
+    const created = await createBooking({ facilityId: data.facilityId, date: data.date, hour: data.hour });
+    setBookings((prev) => [created, ...prev]);
+    return created;
   };
 
-  const cancelBooking = (id: string) =>
-    setBookings((prev) => prev.map((b) => (b.id === id ? { ...b, status: "cancelled" } : b)));
+  const cancelBooking = async (id: string) => {
+    const updated = await cancelBookingRequest(id);
+    setBookings((prev) => prev.map((b) => (b.id === id ? updated : b)));
+  };
 
-  return <BookingsContext.Provider value={{ bookings, addBooking, cancelBooking }}>{children}</BookingsContext.Provider>;
+  return (
+    <BookingsContext.Provider value={{ bookings, loading, error, addBooking, cancelBooking }}>
+      {children}
+    </BookingsContext.Provider>
+  );
 }
 
 export function useBookings() {
