@@ -3,13 +3,10 @@ export type Facility = {
   name: string;
   sport: string;
   amenities: string[];
-  nextFree?: string;
-  location?: string;
-  capacity?: number; // câte rezervări simultane suportă (ex. 4 culoare la bazin)
-  isActive?: boolean;
+  nextFree: string;
 };
 
-export type SlotStatus = "free" | "busy" | "class" | "maintenance" | "past";
+export type SlotStatus = "free" | "busy" | "class" | "maintenance";
 export type BookingStatus = "upcoming" | "past" | "cancelled";
 
 export type Booking = {
@@ -20,5 +17,4 @@ export type Booking = {
   hour: number; // ora de start, slot de 60 min
   status: BookingStatus;
   code: string;
-  startsAt?: string; // ISO 8601, pentru sortare
 };

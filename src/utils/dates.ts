@@ -13,6 +13,3 @@ export function weekDays(offset: number): Date[] {
 
 export const formatDate = (iso: string) =>
   new Date(iso + "T00:00:00").toLocaleDateString("ro-RO", { weekday: "long", day: "numeric", month: "long" });
-
-/** Cheia unui interval în tabelele de disponibilitate: "2030-01-08-10". */
-export const slotKey = (date: string, hour: number) => `${date}-${hour}`;

@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import Badge from "../components/common/Badge";
 import { getFacilities } from "../api/facilities";
 import { useBookings } from "../context/BookingsContext";
+import { facilities as fallbackFacilities } from "../mock/data";
 import type { Facility } from "../types";
 import { formatDate, hourLabel } from "../utils/dates";
 
@@ -11,13 +12,10 @@ const sports = ["Toate sporturile", "Fitness", "Fotbal", "Înot", "Baschet", "Vo
 export default function FacilitiesPage() {
   const [query, setQuery] = useState("");
   const [sport, setSport] = useState(sports[0]);
-  const [facilities, setFacilities] = useState<Facility[]>([]);
+  const [facilities, setFacilities] = useState<Facility[]>(fallbackFacilities);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const { bookings } = useBookings();
-  const next = bookings
-    .filter((b) => b.status === "upcoming")
-    .sort((a, b) => (a.startsAt ?? "").localeCompare(b.startsAt ?? ""))[0];
+  const next = bookings.find((b) => b.status === "upcoming");
 
   useEffect(() => {
     let active = true;
@@ -26,11 +24,8 @@ export default function FacilitiesPage() {
         setFacilities(data);
         setLoading(false);
       }
-    }).catch((err) => {
-      if (active) {
-        setError(err instanceof Error ? err.message : "Nu s-au putut încărca facilitățile.");
-        setLoading(false);
-      }
+    }).catch(() => {
+      if (active) setLoading(false);
     });
     return () => { active = false; };
   }, []);
@@ -68,7 +63,6 @@ export default function FacilitiesPage() {
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">
-            {error && <p role="alert" className="text-red-700">{error}</p>}
             {loading && facilities.length === 0 ? (
               <p className="text-muted">Se încarcă facilitățile…</p>
             ) : shown.map((f) => (
@@ -79,13 +73,7 @@ export default function FacilitiesPage() {
                   {f.amenities.map((a) => <Badge key={a} text={a} />)}
                 </div>
                 <div className="mt-3 flex items-end justify-between gap-2">
-                  <p className="text-sm text-muted">
-                    {f.nextFree
-                      ? `Următorul interval liber: ${f.nextFree}`
-                      : [f.location, f.capacity && f.capacity > 1 ? `${f.capacity} locuri simultane` : null]
-                          .filter(Boolean)
-                          .join(" · ")}
-                  </p>
+                  <p className="text-sm text-muted">Următorul interval liber: {f.nextFree}</p>
                   <Link
                     to={`/facilitati/${f.id}`}
                     className="inline-flex h-10 items-center rounded-lg bg-primary px-4 text-sm font-medium text-white"
@@ -95,7 +83,7 @@ export default function FacilitiesPage() {
                 </div>
               </article>
             ))}
-            {!loading && !error && shown.length === 0 && <p className="text-muted">Nicio facilitate găsită. Schimbă căutarea sau filtrul.</p>}
+            {!loading && shown.length === 0 && <p className="text-muted">Nicio facilitate găsită. Schimbă căutarea sau filtrul.</p>}
           </div>
         </section>
 
