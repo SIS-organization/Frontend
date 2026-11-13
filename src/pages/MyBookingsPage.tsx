@@ -13,24 +13,11 @@ const tabs = [
 
 export default function MyBookingsPage() {
   const [tab, setTab] = useState<(typeof tabs)[number]["key"]>("upcoming");
-  const { bookings, loading, error, cancelBooking } = useBookings();
-  const [actionError, setActionError] = useState<string | null>(null);
+  const { bookings, cancelBooking } = useBookings();
 
-  const byStart = (a: { startsAt?: string }, b: { startsAt?: string }) =>
-    (a.startsAt ?? "").localeCompare(b.startsAt ?? "");
-
-  const shown = bookings
-    .filter((b) => (tab === "upcoming" ? b.status === "upcoming" : tab === "history" ? b.status !== "upcoming" : false))
-    .sort((a, b) => (tab === "upcoming" ? byStart(a, b) : byStart(b, a))); // viitoare: cele mai apropiate întâi
-
-  const cancel = async (id: string) => {
-    setActionError(null);
-    try {
-      await cancelBooking(id);
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Rezervarea nu a putut fi anulată.");
-    }
-  };
+  const shown = bookings.filter((b) =>
+    tab === "upcoming" ? b.status === "upcoming" : tab === "history" ? b.status !== "upcoming" : false
+  );
 
   return (
     <>
@@ -57,12 +44,6 @@ export default function MyBookingsPage() {
         ))}
       </div>
 
-      {(error || actionError) && (
-        <p role="alert" className="mb-4 max-w-3xl rounded-lg bg-red-50 p-3 text-sm text-red-700">
-          {actionError ?? error}
-        </p>
-      )}
-
       <div className="flex max-w-3xl flex-col gap-4">
         {shown.map((b) => (
           <article key={b.id} className="rounded-xl border border-gray-200 bg-white p-4">
@@ -81,13 +62,12 @@ export default function MyBookingsPage() {
               <div className="mt-4 flex flex-col gap-2 md:flex-row">
                 <Button variant="outline">Vezi detalii</Button>
                 <Button variant="outline">Eliberează anticipat</Button>
-                <Button variant="danger" onClick={() => cancel(b.id)}>Anulează rezervarea</Button>
+                <Button variant="danger" onClick={() => cancelBooking(b.id)}>Anulează rezervarea</Button>
               </div>
             )}
           </article>
         ))}
-        {loading && <p className="text-muted">Se încarcă rezervările…</p>}
-        {!loading && shown.length === 0 && (
+        {shown.length === 0 && (
           <p className="text-muted">
             {tab === "waitlist" ? "Nu ești pe nicio listă de așteptare." : "Nimic aici încă. Rezervă o facilitate ca să apară în listă."}
           </p>
