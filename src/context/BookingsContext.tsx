@@ -21,6 +21,8 @@ const inDays = (n: number) => {
 };
 
 const initial: Booking[] = [
+  // Rezervare în desfășurare chiar acum, ca butonul „Eliberează anticipat” să poată fi văzut în demo.
+  { id: "b0", facilityId: 3, facilityName: "Bazin de înot", date: inDays(0), hour: new Date().getHours(), status: "upcoming", code: "USV-1101" },
   { id: "b1", facilityId: 2, facilityName: "Sală fitness", date: inDays(2), hour: 17, status: "upcoming", code: "USV-1042" },
   { id: "b2", facilityId: 1, facilityName: "Teren de fotbal", date: inDays(-5), hour: 19, status: "past", code: "USV-0987" },
 ];

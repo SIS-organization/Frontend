@@ -4,9 +4,11 @@ import Badge from "../components/common/Badge";
 import Button from "../components/common/Button";
 import CancelBookingDialog from "../components/booking/CancelBookingDialog";
 import { useBookings } from "../context/BookingsContext";
+import { useNow } from "../hooks/useNow";
 import type { Booking } from "../types";
 import { canCancelBooking } from "../utils/cancellation";
 import { formatDate, hourLabel } from "../utils/dates";
+import { isBookingInProgress } from "../utils/releaseEarly";
 
 const tabs = [
   { key: "upcoming", label: "Urmează" },
@@ -16,21 +18,38 @@ const tabs = [
 
 export default function MyBookingsPage() {
   const [tab, setTab] = useState<(typeof tabs)[number]["key"]>("upcoming");
-  const { bookings, cancelBooking } = useBookings();
+  const { bookings, cancelBooking, releaseEarly } = useBookings();
+  const now = useNow();
   const [toCancel, setToCancel] = useState<{ booking: Booking; canCancel: boolean } | null>(null);
-  const [cancelResult, setCancelResult] = useState<string | null>(null);
+  const [releasingId, setReleasingId] = useState<string | null>(null);
+  const [actionResult, setActionResult] = useState<{ text: string; error?: boolean } | null>(null);
 
   const openCancelDialog = (booking: Booking) => {
-    setCancelResult(null);
+    setActionResult(null);
     setToCancel({ booking, canCancel: canCancelBooking(booking, new Date()) });
   };
 
   const confirmCancel = async (booking: Booking) => {
     const { quotaRefunded } = await cancelBooking(booking.id);
     setToCancel(null);
-    setCancelResult(
-      `Rezervarea ${booking.code} a fost anulată.${quotaRefunded ? " Ora a revenit în cota ta lunară." : ""}`
-    );
+    setActionResult({
+      text: `Rezervarea ${booking.code} a fost anulată.${quotaRefunded ? " Ora a revenit în cota ta lunară." : ""}`,
+    });
+  };
+
+  const handleReleaseEarly = async (booking: Booking) => {
+    setActionResult(null);
+    setReleasingId(booking.id);
+    try {
+      await releaseEarly(booking.id);
+      setActionResult({
+        text: `Ai eliberat restul intervalului pentru ${booking.code}. Următorul utilizator eligibil va fi anunțat.`,
+      });
+    } catch {
+      setActionResult({ text: "Eliberarea nu a reușit. Încearcă din nou.", error: true });
+    } finally {
+      setReleasingId(null);
+    }
   };
 
   const shown = bookings.filter((b) =>
@@ -49,9 +68,12 @@ export default function MyBookingsPage() {
         </Link>
       </div>
 
-      {cancelResult && (
-        <p role="status" className="mb-5 max-w-3xl rounded-xl bg-primary/10 px-4 py-3 text-sm text-primary">
-          {cancelResult}
+      {actionResult && (
+        <p
+          role={actionResult.error ? "alert" : "status"}
+          className={`mb-5 max-w-3xl rounded-xl px-4 py-3 text-sm ${actionResult.error ? "bg-red-50 text-red-700" : "bg-primary/10 text-primary"}`}
+        >
+          {actionResult.text}
         </p>
       )}
 
@@ -85,7 +107,11 @@ export default function MyBookingsPage() {
             {b.status === "upcoming" && (
               <div className="mt-4 flex flex-col gap-2 md:flex-row">
                 <Button variant="outline">Vezi detalii</Button>
-                <Button variant="outline">Eliberează anticipat</Button>
+                {isBookingInProgress(b, now) && (
+                  <Button variant="outline" disabled={releasingId === b.id} onClick={() => handleReleaseEarly(b)}>
+                    {releasingId === b.id ? "Se eliberează…" : "Eliberează anticipat"}
+                  </Button>
+                )}
                 <Button variant="danger" onClick={() => openCancelDialog(b)}>Anulează rezervarea</Button>
               </div>
             )}
