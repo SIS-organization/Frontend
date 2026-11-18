@@ -6,22 +6,30 @@ export type UserQuota = {
 };
 
 export type BookingInput = {
-  facilityId: number;
-  facilityName?: string;
-  startsAt: string;
-  endsAt: string;
+  facilityId: string;
+  startTime: string;
+  endTime: string;
+  allowPaidExtra?: boolean;
 };
 
 export type BookingResponse = {
   id: string;
-  facilityId: number;
-  facilityName: string;
-  date: string;
-  hour: number;
-  status: "upcoming" | "past" | "cancelled";
   code: string;
-  startsAt: string;
-  endsAt: string;
+  facility: {
+    id: string;
+    name: string;
+    campus?: string;
+  };
+  startTime: string;
+  endTime: string;
+  status:
+    | "in_verification"
+    | "payment_pending"
+    | "confirmed"
+    | "rejected"
+    | "cancelled"
+    | "awaiting_transfer"
+    | "completed";
 };
 
 export async function getUserQuota(): Promise<UserQuota> {
@@ -29,9 +37,11 @@ export async function getUserQuota(): Promise<UserQuota> {
 }
 
 export async function createBooking(payload: BookingInput): Promise<BookingResponse> {
-  return apiRequest<BookingResponse>("/bookings", "POST", payload);
+  return apiRequest<BookingResponse>("/bookings", "POST", payload, {
+    "Idempotency-Key": crypto.randomUUID(),
+  });
 }
 
-export async function getBookingDetails(id: string): Promise<{ id: string; code: string; qrUrl: string }> {
-  return apiRequest<{ id: string; code: string; qrUrl: string }>(`/bookings/${id}`);
+export async function getBookingDetails(id: string): Promise<BookingResponse> {
+  return apiRequest<BookingResponse>(`/bookings/${encodeURIComponent(id)}`);
 }

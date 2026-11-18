@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import Button from "../components/common/Button";
+import Modal from "../components/common/Modal";
 import TimeGrid from "../components/booking/TimeGrid";
+import { createBooking, type BookingResponse } from "../api/bookings";
+import { ApiError } from "../api/client";
 import { getFacility, getFacilityAvailability, type DayAvailability, type Facility, type SlotCell } from "../api/facilities";
 import { formatDate, toISO, weekDays } from "../utils/dates";
 
@@ -29,11 +32,17 @@ export default function FacilityDetailPage() {
   } | null>(null);
   const [offset, setOffset] = useState(0);
   const [selected, setSelected] = useState<SelectedSlot>(null);
+  const [availabilityVersion, setAvailabilityVersion] = useState(0);
+  const [bookingModalOpen, setBookingModalOpen] = useState(false);
+  const [bookingSubmitting, setBookingSubmitting] = useState(false);
+  const [bookingError, setBookingError] = useState<string | null>(null);
+  const [bookingResult, setBookingResult] = useState<BookingResponse | null>(null);
+  const [bookingSlot, setBookingSlot] = useState<SelectedSlot>(null);
 
   const week = weekDays(offset);
   const from = toISO(week[0]);
   const to = toISO(week[6]);
-  const availabilityKey = JSON.stringify([id, from, to]);
+  const availabilityKey = JSON.stringify([id, from, to, availabilityVersion]);
   const matchingFacilityLoad = facilityLoad?.id === id ? facilityLoad : null;
   const loadingFacility = Boolean(id) && facilityLoad?.id !== id;
   const facility = matchingFacilityLoad?.facility ?? null;
@@ -107,14 +116,60 @@ export default function FacilityDetailPage() {
   }
 
   const timezone = facility.timezone ?? "Europe/Bucharest";
+  const bookingPreview = currentSelection ?? bookingSlot;
+  const closeBookingModal = () => {
+    if (bookingSubmitting) return;
+    setBookingModalOpen(false);
+    setBookingError(null);
+    setBookingSlot(null);
+    if (bookingResult) {
+      setSelected(null);
+      setBookingResult(null);
+    }
+  };
   const changeWeek = (nextOffset: number) => {
     setOffset(nextOffset);
     setSelected(null);
+  };
+  const submitBooking = async () => {
+    if (!currentSelection || bookingSubmitting || bookingResult) return;
+
+    setBookingSlot(currentSelection);
+    setBookingSubmitting(true);
+    setBookingError(null);
+    try {
+      const result = await createBooking({
+        facilityId: facility.id,
+        startTime: currentSelection.slot.startTime,
+        endTime: currentSelection.slot.endTime,
+        allowPaidExtra: false,
+      });
+      setBookingResult(result);
+      setSelected(null);
+      setAvailabilityVersion((version) => version + 1);
+    } catch (requestError: unknown) {
+      if (requestError instanceof ApiError && requestError.status === 409) {
+        setSelected(null);
+        setAvailabilityVersion((version) => version + 1);
+      }
+      setBookingError(
+        requestError instanceof Error ? requestError.message : "Rezervarea nu a putut fi efectuată.",
+      );
+    } finally {
+      setBookingSubmitting(false);
+    }
   };
 
   return (
     <>
       <Link to="/" className="text-sm font-medium text-primary underline">Înapoi la facilități</Link>
+      {facility.imageUrl && (
+        <img
+          src={facility.imageUrl}
+          alt={facility.name}
+          className="mb-5 mt-3 h-56 w-full rounded-xl object-cover md:h-80"
+        />
+      )}
       <header className="mb-6 mt-3">
         <p className="text-sm font-medium text-primary">{facility.sports.map((sport) => sport.label).join(" · ")}</p>
         <h1 className="mt-1 text-2xl font-bold">{facility.name}</h1>
@@ -203,9 +258,16 @@ export default function FacilityDetailPage() {
                   {timeLabel(currentSelection.slot.endTime, timezone)}
                 </p>
                 {currentSelection.slot.label && <p className="mt-2 text-sm text-muted">{currentSelection.slot.label}</p>}
-                <p className="mt-3 rounded-lg bg-gray-50 p-3 text-sm text-muted">
-                  Intervalul este selectat. Confirmarea rezervării va fi disponibilă în fluxul de rezervare.
-                </p>
+                <Button
+                  className="mt-4 w-full"
+                  onClick={() => {
+                    setBookingError(null);
+                    setBookingSlot(currentSelection);
+                    setBookingModalOpen(true);
+                  }}
+                >
+                  Rezervă acest interval
+                </Button>
               </>
             ) : (
               <p className="text-sm text-muted">Alege un interval liber din calendar pentru a vedea detaliile.</p>
@@ -220,6 +282,53 @@ export default function FacilityDetailPage() {
           </div>
         </aside>
       </div>
+
+      <Modal
+        open={bookingModalOpen}
+        onClose={closeBookingModal}
+        title={bookingResult ? "Rezervare confirmată" : "Confirmă rezervarea"}
+      >
+        {bookingResult ? (
+          <div>
+            <p className="text-sm text-muted">
+              Rezervarea la {bookingResult.facility.name} a fost înregistrată pentru{" "}
+              {formatDate(currentSelection?.date ?? bookingResult.startTime.slice(0, 10))},{" "}
+              {timeLabel(bookingResult.startTime, timezone)}–{timeLabel(bookingResult.endTime, timezone)}.
+            </p>
+            <p className="mt-3 rounded-lg bg-gray-50 p-3 text-sm">
+              Cod rezervare: <strong>{bookingResult.code}</strong>
+            </p>
+            <p className="mt-2 text-xs text-muted">ID rezervare: {bookingResult.id}</p>
+            {bookingResult.status === "payment_pending" && (
+              <p className="mt-3 text-sm text-amber-800">Rezervarea așteaptă plata înainte de confirmarea finală.</p>
+            )}
+            <Button className="mt-5 w-full" onClick={closeBookingModal}>Închide</Button>
+          </div>
+        ) : (
+          <div>
+            <p className="text-sm text-muted">
+              Confirmi rezervarea pentru {facility.name}, {bookingPreview && (
+                <>
+                  {formatDate(bookingPreview.date)}, {timeLabel(bookingPreview.slot.startTime, timezone)}–
+                  {timeLabel(bookingPreview.slot.endTime, timezone)}
+                </>
+              )}
+              ?
+            </p>
+            {bookingError && (
+              <p role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+                {bookingError}
+              </p>
+            )}
+            <div className="mt-5 flex justify-end gap-2">
+              <Button variant="outline" onClick={closeBookingModal} disabled={bookingSubmitting}>Renunță</Button>
+              <Button onClick={submitBooking} disabled={bookingSubmitting || !currentSelection}>
+                {bookingSubmitting ? "Se rezervă…" : "Confirmă rezervarea"}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </>
   );
 }

@@ -1,4 +1,9 @@
 import { facilities } from "./data";
+import type { BookingResponse } from "../api/bookings";
+import footballFieldImage from "../assets/facilities/football-field.jpg";
+import fitnessRoomImage from "../assets/facilities/fitness-room.png";
+import swimmingPoolImage from "../assets/facilities/swimming-pool.jpg";
+import sportsHallImage from "../assets/facilities/sports-hall.jpg";
 import type {
   AmenityCode,
   Facility,
@@ -16,6 +21,15 @@ const facilityIds: Record<number, string> = {
   3: "e0b1cdd4-d6fd-49ef-a7bd-2be2c33a5b13",
   4: "e0b1cdd4-d6fd-49ef-a7bd-2be2c33a5b14",
 };
+
+const facilityImages: Record<number, string> = {
+  1: footballFieldImage,
+  2: fitnessRoomImage,
+  3: swimmingPoolImage,
+  4: sportsHallImage,
+};
+
+const mockBookings: BookingResponse[] = [];
 
 const sportCodes: Record<string, Array<{ code: SportCode; label: string }>> = {
   Fotbal: [{ code: "football", label: "Fotbal" }],
@@ -104,8 +118,17 @@ function slotsForDate(facilityId: string, date: string): SlotCell[] {
     const hour = index + 8;
     const isPast = date < today || (date === today && (hour < currentHour || (hour === currentHour && currentMinute > 0)));
     const value = (facility.id * 11 + Number(date.slice(-2)) * 13 + hour * 5) % 11;
+    const startTime = dateTimeInBucharest(date, hour);
+    const endTime = dateTimeInBucharest(date, hour + 1);
     const status: SlotStatus = isPast
       ? "past"
+      : mockBookings.some(
+          (booking) =>
+            booking.facility.id === facilityId &&
+            booking.startTime === startTime &&
+            booking.endTime === endTime,
+        )
+        ? "booked"
       : value === 0
         ? "maintenance"
         : value === 1
@@ -115,8 +138,6 @@ function slotsForDate(facilityId: string, date: string): SlotCell[] {
             : value === 3 || value === 4
               ? "booked"
               : "free";
-    const startTime = dateTimeInBucharest(date, hour);
-    const endTime = dateTimeInBucharest(date, hour + 1);
     const labels: Partial<Record<SlotStatus, string>> = {
       booked: "Ocupat",
       university_course: "Curs USV",
@@ -184,7 +205,7 @@ function toFacilityResponse(facilityId: number, date: string): Facility {
     name: source.name,
     description: `${sports.map((sport) => sport.label).join(" · ")} · ${amenities.map((amenity) => amenity.label).join(" · ")}`,
     campus: "Campus USV",
-    imageUrl: null,
+    imageUrl: facilityImages[source.id],
     sports,
     amenities,
     status: "operational",
@@ -267,42 +288,42 @@ export function mockApiHandler(path: string, method: "GET" | "POST", body?: unkn
 
   if (path === "/bookings" && method === "POST") {
     const payload = body as {
-      facilityId: number;
-      facilityName?: string;
-      startsAt: string;
-      endsAt: string;
+      facilityId: string;
+      startTime: string;
+      endTime: string;
+      allowPaidExtra: boolean;
     };
 
-    const date = payload.startsAt.slice(0, 10);
-    const hour = Number(payload.startsAt.slice(11, 13));
+    const facility = findFacility(payload.facilityId);
+    const availableSlot = slotsForDate(payload.facilityId, payload.startTime.slice(0, 10)).find(
+      (slot) => slot.startTime === payload.startTime && slot.endTime === payload.endTime,
+    );
+    if (!availableSlot || availableSlot.status !== "free" || availableSlot.bookable === false) {
+      throw new Error("Intervalul nu mai este disponibil. Alege altă oră.");
+    }
+
     const code = `USV-${Math.floor(1000 + Math.random() * 9000)}`;
-
-    return {
-      success: true,
-      data: {
-        id: `mock-${Date.now()}`,
-        facilityId: payload.facilityId,
-        facilityName: payload.facilityName ?? `Facilitate ${payload.facilityId}`,
-        date,
-        hour,
-        status: "upcoming",
-        code,
-        startsAt: payload.startsAt,
-        endsAt: payload.endsAt,
+    const booking: BookingResponse = {
+      id: crypto.randomUUID(),
+      code,
+      facility: {
+        id: payload.facilityId,
+        name: facility.name,
+        campus: "Campus USV",
       },
+      startTime: payload.startTime,
+      endTime: payload.endTime,
+      status: "confirmed",
     };
+    mockBookings.push(booking);
+    return { success: true, data: booking };
   }
 
   if (path.startsWith("/bookings/") && method === "GET") {
     const id = path.split("/").at(-1) ?? "mock-1";
-    return {
-      success: true,
-      data: {
-        id,
-        code: `USV-${Math.floor(1000 + Math.random() * 9000)}`,
-        qrUrl: `https://example.com/qr/${id}`,
-      },
-    };
+    const booking = mockBookings.find((item) => item.id === id);
+    if (!booking) throw new Error(`Booking not found: ${id}`);
+    return { success: true, data: booking };
   }
 
   throw new Error(`No mock defined for ${method} ${path}`);

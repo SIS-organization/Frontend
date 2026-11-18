@@ -4,6 +4,22 @@ export type ApiResult<T> = {
   message?: string;
 };
 
+export class ApiError extends Error {
+  readonly status: number;
+  readonly code?: string;
+
+  constructor(
+    message: string,
+    status: number,
+    code?: string,
+  ) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000";
 
 const delay = (ms = 250) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -18,7 +34,12 @@ function unwrap<T>(payload: unknown): T {
   return payload as T;
 }
 
-export async function apiRequest<T>(path: string, method: "GET" | "POST" = "GET", body?: unknown): Promise<T> {
+export async function apiRequest<T>(
+  path: string,
+  method: "GET" | "POST" = "GET",
+  body?: unknown,
+  headers: Record<string, string> = {},
+): Promise<T> {
   const useMock = !import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_USE_MOCK_API === "true";
 
   if (useMock) {
@@ -31,12 +52,36 @@ export async function apiRequest<T>(path: string, method: "GET" | "POST" = "GET"
     method,
     headers: {
       "Content-Type": "application/json",
+      ...headers,
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
 
   if (!response.ok) {
-    throw new Error(`API request failed for ${path}`);
+    const responseBody = await response.text();
+    let problem: unknown;
+    if (responseBody) {
+      try {
+        problem = JSON.parse(responseBody);
+      } catch {
+        problem = responseBody;
+      }
+    }
+
+    if (typeof problem === "string" && problem.trim()) {
+      throw new ApiError(problem, response.status);
+    }
+
+    if (problem && typeof problem === "object") {
+      const details = problem as { detail?: unknown; title?: unknown; code?: unknown };
+      const message =
+        (typeof details.detail === "string" && details.detail) ||
+        (typeof details.title === "string" && details.title) ||
+        `Cererea a eșuat (${response.status}).`;
+      throw new ApiError(message, response.status, typeof details.code === "string" ? details.code : undefined);
+    }
+
+    throw new ApiError(`Cererea a eșuat (${response.status}).`, response.status);
   }
 
   return unwrap<T>(await response.json());
