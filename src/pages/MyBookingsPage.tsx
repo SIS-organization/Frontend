@@ -2,7 +2,10 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import Badge from "../components/common/Badge";
 import Button from "../components/common/Button";
+import CancelBookingDialog from "../components/booking/CancelBookingDialog";
 import { useBookings } from "../context/BookingsContext";
+import type { Booking } from "../types";
+import { canCancelBooking } from "../utils/cancellation";
 import { formatDate, hourLabel } from "../utils/dates";
 
 const tabs = [
@@ -14,6 +17,21 @@ const tabs = [
 export default function MyBookingsPage() {
   const [tab, setTab] = useState<(typeof tabs)[number]["key"]>("upcoming");
   const { bookings, cancelBooking } = useBookings();
+  const [toCancel, setToCancel] = useState<{ booking: Booking; canCancel: boolean } | null>(null);
+  const [cancelResult, setCancelResult] = useState<string | null>(null);
+
+  const openCancelDialog = (booking: Booking) => {
+    setCancelResult(null);
+    setToCancel({ booking, canCancel: canCancelBooking(booking, new Date()) });
+  };
+
+  const confirmCancel = async (booking: Booking) => {
+    const { quotaRefunded } = await cancelBooking(booking.id);
+    setToCancel(null);
+    setCancelResult(
+      `Rezervarea ${booking.code} a fost anulată.${quotaRefunded ? " Ora a revenit în cota ta lunară." : ""}`
+    );
+  };
 
   const shown = bookings.filter((b) =>
     tab === "upcoming" ? b.status === "upcoming" : tab === "history" ? b.status !== "upcoming" : false
@@ -30,6 +48,12 @@ export default function MyBookingsPage() {
           Explorează facilitățile
         </Link>
       </div>
+
+      {cancelResult && (
+        <p role="status" className="mb-5 max-w-3xl rounded-xl bg-primary/10 px-4 py-3 text-sm text-primary">
+          {cancelResult}
+        </p>
+      )}
 
       <div className="mb-5 flex gap-2 overflow-x-auto">
         {tabs.map((t) => (
@@ -62,7 +86,7 @@ export default function MyBookingsPage() {
               <div className="mt-4 flex flex-col gap-2 md:flex-row">
                 <Button variant="outline">Vezi detalii</Button>
                 <Button variant="outline">Eliberează anticipat</Button>
-                <Button variant="danger" onClick={() => cancelBooking(b.id)}>Anulează rezervarea</Button>
+                <Button variant="danger" onClick={() => openCancelDialog(b)}>Anulează rezervarea</Button>
               </div>
             )}
           </article>
@@ -73,6 +97,13 @@ export default function MyBookingsPage() {
           </p>
         )}
       </div>
+
+      <CancelBookingDialog
+        booking={toCancel?.booking ?? null}
+        canCancel={toCancel?.canCancel ?? false}
+        onClose={() => setToCancel(null)}
+        onConfirm={confirmCancel}
+      />
     </>
   );
 }
