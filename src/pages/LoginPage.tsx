@@ -1,4 +1,7 @@
+import { useState } from "react";
+import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import Button from "../components/common/Button";
+import { useAuth } from "../context/useAuth";
 import {
   ArrowRightIcon,
   ArrowUpRightIcon,
@@ -16,6 +19,34 @@ const sportIcons = [DumbbellIcon, WavesIcon, TargetIcon, VolleyballIcon];
 
 // Pagina de login (KAN-23), după designul „Autentificare” din Figma.
 export default function LoginPage() {
+  const { user, loading, loginWithUsv, loginAsGuest } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [pending, setPending] = useState<"usv" | "guest" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const redirectTo = (location.state as { from?: string } | null)?.from ?? "/";
+
+  if (loading) {
+    return null;
+  }
+
+  if (user && !pending) {
+    return <Navigate to={redirectTo} replace />;
+  }
+
+  const handleLogin = async (kind: "usv" | "guest") => {
+    setPending(kind);
+    setError(null);
+    try {
+      await (kind === "usv" ? loginWithUsv() : loginAsGuest());
+      navigate(redirectTo, { replace: true });
+    } catch {
+      setError("Autentificarea nu a reușit. Încearcă din nou.");
+      setPending(null);
+    }
+  };
+
   return (
     <div className="flex min-h-screen flex-col bg-bg">
       <header className="flex h-20 shrink-0 items-center justify-between border-b border-black/10 bg-white px-5 md:px-12">
@@ -102,8 +133,12 @@ export default function LoginPage() {
             <p className="mt-5 text-[13px] leading-relaxed text-muted">
               Folosește contul instituțional. Rolul tău este recunoscut automat; nu trebuie să creezi un cont separat.
             </p>
-            <Button className="mt-5 inline-flex items-center gap-3 px-[18px] font-semibold md:h-11!">
-              Continuă cu contul USV
+            <Button
+              className="mt-5 inline-flex items-center gap-3 px-[18px] font-semibold md:h-11!"
+              disabled={pending !== null}
+              onClick={() => handleLogin("usv")}
+            >
+              {pending === "usv" ? "Se conectează…" : "Continuă cu contul USV"}
               <ArrowRightIcon className="size-4" />
             </Button>
             <p className="mt-5 flex items-center gap-2 text-[11px] text-primary">
@@ -129,10 +164,18 @@ export default function LoginPage() {
           <Button
             variant="outline"
             className="mt-5 inline-flex w-fit items-center gap-3 border-black/10! px-[18px] font-semibold text-heading! md:h-11!"
+            disabled={pending !== null}
+            onClick={() => handleLogin("guest")}
           >
-            Continuă ca public extern
+            {pending === "guest" ? "Se conectează…" : "Continuă ca public extern"}
             <ArrowUpRightIcon className="size-4" />
           </Button>
+
+          {error && (
+            <p role="alert" className="mt-5 text-sm text-red-600">
+              {error}
+            </p>
+          )}
 
           <p className="mt-9 text-[10px] leading-relaxed text-muted">
             Prin continuare, accepți regulamentul facilităților și politica de confidențialitate. Eligibilitatea este
