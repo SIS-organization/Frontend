@@ -1,4 +1,4 @@
-import { apiRequest } from "./client";
+import { apiRequest, type ApiResult } from "./client";
 
 export type UserQuota = {
   remainingQuota: number;
@@ -34,4 +34,16 @@ export async function createBooking(payload: BookingInput): Promise<BookingRespo
 
 export async function getBookingDetails(id: string): Promise<{ id: string; code: string; qrUrl: string }> {
   return apiRequest<{ id: string; code: string; qrUrl: string }>(`/bookings/${id}`);
+}
+
+export type CancelBookingResponse = {
+  id: string;
+  status: "cancelled";
+  quotaRefunded: boolean;
+};
+
+// Backend: răspunde 422 dacă rezervarea începe în mai puțin de 2 ore (KAN-39).
+export async function cancelBooking(id: string): Promise<CancelBookingResponse> {
+  const result = await apiRequest<ApiResult<CancelBookingResponse>>(`/bookings/${id}/cancel`, "POST");
+  return result.data;
 }

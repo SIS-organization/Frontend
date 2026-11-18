@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, type ReactNode } from "react";
-import { createBooking } from "../api/bookings";
+import { cancelBooking as cancelBookingRequest, createBooking } from "../api/bookings";
 import type { Booking } from "../types";
 import { toISO } from "../utils/dates";
 
@@ -8,7 +8,7 @@ type NewBooking = Pick<Booking, "facilityId" | "facilityName" | "date" | "hour">
 type Ctx = {
   bookings: Booking[];
   addBooking: (data: NewBooking) => Promise<Booking>;
-  cancelBooking: (id: string) => void;
+  cancelBooking: (id: string) => Promise<{ quotaRefunded: boolean }>;
 };
 
 const BookingsContext = createContext<Ctx | null>(null);
@@ -50,8 +50,12 @@ export function BookingsProvider({ children }: { children: ReactNode }) {
     return b;
   };
 
-  const cancelBooking = (id: string) =>
+  // Rezervarea devine „Anulată” doar după ce serverul confirmă; la eroare rămâne activă.
+  const cancelBooking = async (id: string) => {
+    const result = await cancelBookingRequest(id);
     setBookings((prev) => prev.map((b) => (b.id === id ? { ...b, status: "cancelled" } : b)));
+    return { quotaRefunded: result.quotaRefunded };
+  };
 
   return <BookingsContext.Provider value={{ bookings, addBooking, cancelBooking }}>{children}</BookingsContext.Provider>;
 }
