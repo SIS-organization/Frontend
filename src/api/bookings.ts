@@ -47,3 +47,14 @@ export async function cancelBooking(id: string): Promise<CancelBookingResponse> 
   const result = await apiRequest<ApiResult<CancelBookingResponse>>(`/bookings/${id}/cancel`, "POST");
   return result.data;
 }
+
+export type ReleaseEarlyResponse = {
+  id: string;
+  releasedFrom: string;
+};
+
+// Backend (KAN-40): valabil doar după începerea rezervării; restul intervalului redevine liber.
+export async function releaseEarly(id: string): Promise<ReleaseEarlyResponse> {
+  const result = await apiRequest<ApiResult<ReleaseEarlyResponse>>(`/bookings/${id}/release-early`, "POST");
+  return result.data;
+}

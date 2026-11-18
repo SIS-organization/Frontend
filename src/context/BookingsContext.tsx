@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, type ReactNode } from "react";
-import { cancelBooking as cancelBookingRequest, createBooking } from "../api/bookings";
+import { cancelBooking as cancelBookingRequest, createBooking, releaseEarly as releaseEarlyRequest } from "../api/bookings";
 import type { Booking } from "../types";
 import { toISO } from "../utils/dates";
 
@@ -9,6 +9,7 @@ type Ctx = {
   bookings: Booking[];
   addBooking: (data: NewBooking) => Promise<Booking>;
   cancelBooking: (id: string) => Promise<{ quotaRefunded: boolean }>;
+  releaseEarly: (id: string) => Promise<void>;
 };
 
 const BookingsContext = createContext<Ctx | null>(null);
@@ -57,7 +58,13 @@ export function BookingsProvider({ children }: { children: ReactNode }) {
     return { quotaRefunded: result.quotaRefunded };
   };
 
-  return <BookingsContext.Provider value={{ bookings, addBooking, cancelBooking }}>{children}</BookingsContext.Provider>;
+  // După eliberare rezervarea se încheie: trece în Istoric ca „Finalizată”.
+  const releaseEarly = async (id: string) => {
+    await releaseEarlyRequest(id);
+    setBookings((prev) => prev.map((b) => (b.id === id ? { ...b, status: "past" } : b)));
+  };
+
+  return <BookingsContext.Provider value={{ bookings, addBooking, cancelBooking, releaseEarly }}>{children}</BookingsContext.Provider>;
 }
 
 export function useBookings() {

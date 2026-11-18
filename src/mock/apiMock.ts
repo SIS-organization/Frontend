@@ -83,6 +83,11 @@ export function mockApiHandler(path: string, method: "GET" | "POST", body?: unkn
     return { success: true, data: { id, status: "cancelled", quotaRefunded: true } };
   }
 
+  if (path.startsWith("/bookings/") && path.endsWith("/release-early") && method === "POST") {
+    const id = path.split("/")[2];
+    return { success: true, data: { id, releasedFrom: new Date().toISOString() } };
+  }
+
   if (path.startsWith("/bookings/") && method === "GET") {
     const id = path.split("/").at(-1) ?? "mock-1";
     return {
