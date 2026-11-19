@@ -258,9 +258,21 @@ function listFacilities(path: string): FacilityListResponse {
   };
 }
 
-export function mockApiHandler(path: string, method: "GET" | "POST", body?: unknown) {
-  if (path === "/users/me/quota" && method === "GET") {
-    return { success: true, data: { remainingQuota: 2, limit: 4 } };
+export function mockApiHandler(path: string, method: "GET" | "POST" | "PATCH", body?: unknown) {
+  if (path.startsWith("/users/me/quota") && method === "GET") {
+    return {
+      success: true,
+      data: {
+        month: "2026-11",
+        included: 4,
+        used: 2,
+        remaining: 2,
+        resetsOn: "2026-12-01",
+        priority: false,
+        limitReached: false,
+        appliesTo: "student",
+      },
+    };
   }
 
   if ((path === "/facilities" || path.startsWith("/facilities?")) && method === "GET") {
@@ -291,7 +303,7 @@ export function mockApiHandler(path: string, method: "GET" | "POST", body?: unkn
       facilityId: string;
       startTime: string;
       endTime: string;
-      allowPaidExtra: boolean;
+      notes?: string;
     };
 
     const facility = findFacility(payload.facilityId);
@@ -319,11 +331,50 @@ export function mockApiHandler(path: string, method: "GET" | "POST", body?: unkn
     return { success: true, data: booking };
   }
 
+  if (path.startsWith("/bookings?") && method === "GET") {
+    return {
+      success: true,
+      data: {
+        page: 1,
+        pageSize: 20,
+        totalItems: mockBookings.length,
+        totalPages: mockBookings.length ? 1 : 0,
+        items: mockBookings,
+      },
+    };
+  }
+
   if (path.startsWith("/bookings/") && method === "GET") {
     const id = path.split("/").at(-1) ?? "mock-1";
     const booking = mockBookings.find((item) => item.id === id);
     if (!booking) throw new Error(`Booking not found: ${id}`);
     return { success: true, data: booking };
+  }
+
+  const cancelMatch = path.match(/^\/bookings\/([^/]+)\/cancel$/);
+  if (cancelMatch && method === "POST") {
+    const booking = mockBookings.find((item) => item.id === cancelMatch[1]);
+    if (!booking) throw new Error(`Booking not found: ${cancelMatch[1]}`);
+    const cancelled = {
+      ...booking,
+      status: "cancelled" as const,
+      canCancel: false,
+      cancelledAt: new Date().toISOString(),
+      quotaRefunded: booking.usesIncludedQuota ?? false,
+      cancelReason:
+        body && typeof body === "object" && "reason" in body
+          ? String(body.reason)
+          : null,
+    };
+    mockBookings.splice(mockBookings.indexOf(booking), 1, cancelled);
+    return {
+      success: true,
+      data: {
+        booking: cancelled,
+        quotaRestored: cancelled.quotaRefunded,
+        waitlistNotified: 0,
+      },
+    };
   }
 
   throw new Error(`No mock defined for ${method} ${path}`);

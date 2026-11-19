@@ -142,7 +142,6 @@ export default function FacilityDetailPage() {
         facilityId: facility.id,
         startTime: currentSelection.slot.startTime,
         endTime: currentSelection.slot.endTime,
-        allowPaidExtra: false,
       });
       setBookingResult(result);
       setSelected(null);
@@ -299,9 +298,6 @@ export default function FacilityDetailPage() {
               Cod rezervare: <strong>{bookingResult.code}</strong>
             </p>
             <p className="mt-2 text-xs text-muted">ID rezervare: {bookingResult.id}</p>
-            {bookingResult.status === "payment_pending" && (
-              <p className="mt-3 text-sm text-amber-800">Rezervarea așteaptă plata înainte de confirmarea finală.</p>
-            )}
             <Button className="mt-5 w-full" onClick={closeBookingModal}>Închide</Button>
           </div>
         ) : (

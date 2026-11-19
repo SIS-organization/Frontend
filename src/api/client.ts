@@ -36,7 +36,7 @@ function unwrap<T>(payload: unknown): T {
 
 export async function apiRequest<T>(
   path: string,
-  method: "GET" | "POST" = "GET",
+  method: "GET" | "POST" | "PATCH" = "GET",
   body?: unknown,
   headers: Record<string, string> = {},
 ): Promise<T> {
@@ -48,10 +48,12 @@ export async function apiRequest<T>(
     return unwrap<T>(mockModule.mockApiHandler(path, method, body));
   }
 
+  const accessToken = localStorage.getItem("accessToken");
   const response = await fetch(`${API_BASE_URL}${path}`, {
     method,
     headers: {
       "Content-Type": "application/json",
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
       ...headers,
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
