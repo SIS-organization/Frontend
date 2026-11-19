@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import Badge from "../components/common/Badge";
 import Button from "../components/common/Button";
 import CancelBookingDialog from "../components/booking/CancelBookingDialog";
+import QuotaCard from "../components/booking/QuotaCard";
 import { useBookings } from "../context/BookingsContext";
 import { useNow } from "../hooks/useNow";
 import type { Booking } from "../types";
@@ -18,7 +19,7 @@ const tabs = [
 
 export default function MyBookingsPage() {
   const [tab, setTab] = useState<(typeof tabs)[number]["key"]>("upcoming");
-  const { bookings, cancelBooking, releaseEarly } = useBookings();
+  const { bookings, cancelBooking, releaseEarly, quota, quotaError } = useBookings();
   const now = useNow();
   const [toCancel, setToCancel] = useState<{ booking: Booking; canCancel: boolean } | null>(null);
   const [releasingId, setReleasingId] = useState<string | null>(null);
@@ -67,6 +68,8 @@ export default function MyBookingsPage() {
           Explorează facilitățile
         </Link>
       </div>
+
+      <QuotaCard quota={quota} error={quotaError} />
 
       {actionResult && (
         <p

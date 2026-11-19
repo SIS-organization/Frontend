@@ -17,9 +17,13 @@ const fakeSlots = (facilityId: number, date: string) => {
   return entries;
 };
 
+// Cota lunară simulată: scade la rezervare și revine la anulare, ca bannerul să se actualizeze în demo.
+const QUOTA_LIMIT = 4;
+let remainingQuota = 2;
+
 export function mockApiHandler(path: string, method: "GET" | "POST", body?: unknown) {
   if (path === "/users/me/quota" && method === "GET") {
-    return { success: true, data: { remainingQuota: 2, limit: 4 } };
+    return { success: true, data: { remainingQuota, limit: QUOTA_LIMIT } };
   }
 
   if (path === "/facilities" && method === "GET") {
@@ -61,6 +65,7 @@ export function mockApiHandler(path: string, method: "GET" | "POST", body?: unkn
     const date = payload.startsAt.slice(0, 10);
     const hour = Number(payload.startsAt.slice(11, 13));
     const code = `USV-${Math.floor(1000 + Math.random() * 9000)}`;
+    remainingQuota = Math.max(0, remainingQuota - 1);
 
     return {
       success: true,
@@ -80,6 +85,7 @@ export function mockApiHandler(path: string, method: "GET" | "POST", body?: unkn
 
   if (path.startsWith("/bookings/") && path.endsWith("/cancel") && method === "POST") {
     const id = path.split("/")[2];
+    remainingQuota = Math.min(QUOTA_LIMIT, remainingQuota + 1);
     return { success: true, data: { id, status: "cancelled", quotaRefunded: true } };
   }
 

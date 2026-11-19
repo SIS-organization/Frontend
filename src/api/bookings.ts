@@ -25,7 +25,8 @@ export type BookingResponse = {
 };
 
 export async function getUserQuota(): Promise<UserQuota> {
-  return apiRequest<UserQuota>("/users/me/quota");
+  const result = await apiRequest<ApiResult<UserQuota>>("/users/me/quota");
+  return result.data;
 }
 
 export async function createBooking(payload: BookingInput): Promise<BookingResponse> {

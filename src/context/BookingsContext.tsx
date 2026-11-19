@@ -1,5 +1,11 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
-import { cancelBooking as cancelBookingRequest, createBooking, releaseEarly as releaseEarlyRequest } from "../api/bookings";
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import {
+  cancelBooking as cancelBookingRequest,
+  createBooking,
+  getUserQuota,
+  releaseEarly as releaseEarlyRequest,
+  type UserQuota,
+} from "../api/bookings";
 import type { Booking } from "../types";
 import { toISO } from "../utils/dates";
 
@@ -10,6 +16,8 @@ type Ctx = {
   addBooking: (data: NewBooking) => Promise<Booking>;
   cancelBooking: (id: string) => Promise<{ quotaRefunded: boolean }>;
   releaseEarly: (id: string) => Promise<void>;
+  quota: UserQuota | null;
+  quotaError: boolean;
 };
 
 const BookingsContext = createContext<Ctx | null>(null);
@@ -29,6 +37,32 @@ const initial: Booking[] = [
 
 export function BookingsProvider({ children }: { children: ReactNode }) {
   const [bookings, setBookings] = useState<Booking[]>(initial);
+  const [quota, setQuota] = useState<UserQuota | null>(null);
+  const [quotaError, setQuotaError] = useState(false);
+
+  // Cota vine mereu de la server, ca bannerul să nu se desincronizeze de regulile din backend (KAN-33).
+  const refreshQuota = useCallback(async () => {
+    try {
+      setQuota(await getUserQuota());
+      setQuotaError(false);
+    } catch {
+      setQuotaError(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    getUserQuota()
+      .then((q) => {
+        if (active) setQuota(q);
+      })
+      .catch(() => {
+        if (active) setQuotaError(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const addBooking = async (data: NewBooking) => {
     const payload = {
@@ -50,6 +84,7 @@ export function BookingsProvider({ children }: { children: ReactNode }) {
     };
 
     setBookings((prev) => [b, ...prev]);
+    void refreshQuota();
     return b;
   };
 
@@ -57,6 +92,7 @@ export function BookingsProvider({ children }: { children: ReactNode }) {
   const cancelBooking = async (id: string) => {
     const result = await cancelBookingRequest(id);
     setBookings((prev) => prev.map((b) => (b.id === id ? { ...b, status: "cancelled" } : b)));
+    if (result.quotaRefunded) void refreshQuota();
     return { quotaRefunded: result.quotaRefunded };
   };
 
@@ -66,7 +102,7 @@ export function BookingsProvider({ children }: { children: ReactNode }) {
     setBookings((prev) => prev.map((b) => (b.id === id ? { ...b, status: "past" } : b)));
   };
 
-  return <BookingsContext.Provider value={{ bookings, addBooking, cancelBooking, releaseEarly }}>{children}</BookingsContext.Provider>;
+  return <BookingsContext.Provider value={{ bookings, addBooking, cancelBooking, releaseEarly, quota, quotaError }}>{children}</BookingsContext.Provider>;
 }
 
 export function useBookings() {
