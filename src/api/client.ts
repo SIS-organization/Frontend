@@ -58,7 +58,7 @@ export async function apiRequest<T>(
     const authMock = await import("../mock/authMock");
     const authResult = authMock.authMockHandler(path, method, token);
     if (authResult !== undefined) {
-      return authResult as T;
+      return unwrap<T>(authResult);
     }
     const mockModule = await import("../mock/apiMock");
     return unwrap<T>(mockModule.mockApiHandler(path, method, body));
