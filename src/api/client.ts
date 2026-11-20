@@ -22,6 +22,16 @@ export class ApiError extends Error {
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000";
 
+export const AUTH_TOKEN_KEY = "authToken";
+
+export function getAuthToken(): string | null {
+  try {
+    return localStorage.getItem(AUTH_TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
 const delay = (ms = 250) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Acceptă atât răspunsuri învelite în { success, data }, cât și răspunsuri simple.
@@ -41,19 +51,24 @@ export async function apiRequest<T>(
   headers: Record<string, string> = {},
 ): Promise<T> {
   const useMock = !import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_USE_MOCK_API === "true";
+  const token = getAuthToken();
 
   if (useMock) {
     await delay();
+    const authMock = await import("../mock/authMock");
+    const authResult = authMock.authMockHandler(path, method, token);
+    if (authResult !== undefined) {
+      return authResult as T;
+    }
     const mockModule = await import("../mock/apiMock");
     return unwrap<T>(mockModule.mockApiHandler(path, method, body));
   }
 
-  const accessToken = localStorage.getItem("accessToken");
   const response = await fetch(`${API_BASE_URL}${path}`, {
     method,
     headers: {
       "Content-Type": "application/json",
-      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...headers,
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
