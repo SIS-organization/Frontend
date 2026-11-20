@@ -102,3 +102,11 @@ export async function cancelBooking(id: string, reason?: string): Promise<Cancel
     body,
   );
 }
+
+export async function releaseEarly(id: string, releaseFrom = new Date().toISOString()): Promise<BookingResponse> {
+  return apiRequest<BookingResponse>(
+    `/bookings/${encodeURIComponent(id)}/release-early`,
+    "POST",
+    { releaseFrom },
+  );
+}

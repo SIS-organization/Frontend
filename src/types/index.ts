@@ -11,7 +11,7 @@ export type BookingStatus = "upcoming" | "past" | "cancelled";
 
 export type Booking = {
   id: string;
-  facilityId: number;
+  facilityId: string;
   facilityName: string;
   date: string; // YYYY-MM-DD
   hour: number; // ora de start, slot de 60 min

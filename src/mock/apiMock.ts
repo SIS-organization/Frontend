@@ -377,5 +377,14 @@ export function mockApiHandler(path: string, method: "GET" | "POST" | "PATCH", b
     };
   }
 
+  const releaseMatch = path.match(/^\/bookings\/([^/]+)\/release-early$/);
+  if (releaseMatch && method === "POST") {
+    const booking = mockBookings.find((item) => item.id === releaseMatch[1]);
+    if (!booking) throw new Error(`Booking not found: ${releaseMatch[1]}`);
+    const released = { ...booking, status: "completed" as const, canReleaseEarly: false };
+    mockBookings.splice(mockBookings.indexOf(booking), 1, released);
+    return { success: true, data: released };
+  }
+
   throw new Error(`No mock defined for ${method} ${path}`);
 }
