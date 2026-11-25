@@ -44,11 +44,17 @@ function unwrap<T>(payload: unknown): T {
   return payload as T;
 }
 
+export type RequestOptions = {
+  /** Anulează cererea (de ex. când utilizatorul schimbă ziua înainte de răspuns). */
+  signal?: AbortSignal;
+};
+
 export async function apiRequest<T>(
   path: string,
   method: "GET" | "POST" | "PATCH" = "GET",
   body?: unknown,
   headers: Record<string, string> = {},
+  options: RequestOptions = {},
 ): Promise<T> {
   const useMock = !import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_USE_MOCK_API === "true";
   const token = getAuthToken();
@@ -59,6 +65,11 @@ export async function apiRequest<T>(
     const authResult = authMock.authMockHandler(path, method, token);
     if (authResult !== undefined) {
       return unwrap<T>(authResult);
+    }
+    if (path.startsWith("/admin")) {
+      // Mock-ul de administrare verifică și el rolul (401 / 403), ca backend-ul real.
+      const adminMock = await import("../mock/adminMock");
+      return unwrap<T>(adminMock.adminMockHandler(path, method, token));
     }
     const mockModule = await import("../mock/apiMock");
     return unwrap<T>(mockModule.mockApiHandler(path, method, body));
@@ -72,6 +83,7 @@ export async function apiRequest<T>(
       ...headers,
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
+    signal: options.signal,
   });
 
   if (!response.ok) {
@@ -102,4 +114,4 @@ export async function apiRequest<T>(
   }
 
   return unwrap<T>(await response.json());
-}
+}

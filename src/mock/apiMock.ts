@@ -15,7 +15,7 @@ import type {
 } from "../api/facilities";
 
 const timezone = "Europe/Bucharest";
-const facilityIds: Record<number, string> = {
+export const facilityIds: Record<number, string> = {
   1: "e0b1cdd4-d6fd-49ef-a7bd-2be2c33a5b11",
   2: "e0b1cdd4-d6fd-49ef-a7bd-2be2c33a5b12",
   3: "e0b1cdd4-d6fd-49ef-a7bd-2be2c33a5b13",
