@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import Badge from "../components/common/Badge";
 import { getFacilities, type AmenityCode, type Facility, type SportCode } from "../api/facilities";
-import { toISO } from "../utils/dates";
+import { useBookings } from "../context/useBookings";
+import { formatDate, hourLabel, toISO } from "../utils/dates";
 
 const sports: Array<{ label: string; code?: SportCode }> = [
   { label: "Toate sporturile" },
@@ -52,10 +53,14 @@ function statusLabel(status: Facility["status"]) {
 }
 
 export default function FacilitiesPage() {
+  const { bookings } = useBookings();
   const [query, setQuery] = useState("");
   const [sport, setSport] = useState<SportCode | undefined>();
   const [selectedAmenities, setSelectedAmenities] = useState<AmenityCode[]>([]);
   const [date, setDate] = useState(() => toISO(new Date()));
+  const nextBooking = bookings
+    .filter((booking) => booking.status === "upcoming")
+    .sort((a, b) => a.date.localeCompare(b.date) || a.hour - b.hour)[0];
   const filtersKey = JSON.stringify([query, sport, selectedAmenities, date]);
   const [result, setResult] = useState<{
     filtersKey: string;
@@ -234,6 +239,28 @@ export default function FacilitiesPage() {
         </section>
 
         <aside className="flex flex-col gap-4">
+          <div className="rounded-xl border border-gray-200 bg-white p-4">
+            <h2 className="mb-2 font-semibold">Următoarea rezervare</h2>
+            {nextBooking ? (
+              <>
+                <p className="font-medium">{nextBooking.facilityName}</p>
+                <p className="mt-1 text-sm text-muted">
+                  {formatDate(nextBooking.date)}, {hourLabel(nextBooking.hour)}–{hourLabel(nextBooking.hour + 1)}
+                </p>
+              </>
+            ) : (
+              <p className="text-sm text-muted">Nu ai programări viitoare.</p>
+            )}
+            <div className="mt-4 flex justify-end">
+              <Link
+                to="/programari"
+                className="inline-flex h-10 items-center rounded-lg bg-primary px-4 text-sm font-medium text-white"
+              >
+                Vezi programarea
+              </Link>
+            </div>
+          </div>
+
           <div className="rounded-xl border border-gray-200 bg-white p-4">
             <h2 className="mb-2 font-semibold">Prioritate pentru comunitatea USV</h2>
             <p className="text-sm text-muted">
