@@ -63,6 +63,11 @@ export type AdminBooking = {
   startTime: string;
   endTime: string;
   status: BookingStatus;
+  /**
+   * Culoarul (1–4) la bazin, dacă serverul îl trimite (câmp opțional, nu e încă în contract).
+   * Fără el, orarul împarte rezervările pe culoare în ordinea în care vin.
+   */
+  lane: number | null;
 };
 
 export type FacilityKind = {
@@ -202,6 +207,7 @@ function parseBooking(raw: unknown): AdminBooking | null {
     startTime: startTime!,
     endTime: endTime!,
     status,
+    lane: typeof raw.lane === "number" && Number.isInteger(raw.lane) && raw.lane >= 1 && raw.lane <= 4 ? raw.lane : null,
   };
 }
 

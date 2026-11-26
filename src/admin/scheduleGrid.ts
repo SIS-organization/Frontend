@@ -75,3 +75,50 @@ export const BLOCK_STYLES: Record<BlockType, { box: string; label: string }> = {
   maintenance: { box: "bg-[#fff3dc] text-[#926018]", label: "Întreținere" },
   repair: { box: "bg-[#fcedea] text-[#ac443c]", label: "indisponibil" },
 };
+
+/** O rezervare de la bazin, așezată pe un culoar (1–4). */
+export type LaneBooking = { booking: AdminBooking; from: number; to: number; lane: number };
+
+/**
+ * Împarte rezervările bazinului pe cele 4 culoare: pe fiecare culoar, cel mult
+ * o rezervare în același interval (regula din Figma: „câte o rezervare pe oră”).
+ *   - dacă serverul trimite culoarul (`lane`) și e liber, îl păstrăm;
+ *   - altfel rezervarea primește primul culoar liber pe toată durata ei.
+ * Ce nu încape (peste 4 rezervări simultane) ajunge în `overflow`, ca să fie semnalat.
+ */
+export function poolLanes(
+  bookings: AdminBooking[],
+  facilityId: string,
+  day: string,
+): { placed: LaneBooking[]; overflow: AdminBooking[] } {
+  const items = bookings
+    .flatMap((booking) => {
+      if (booking.facilityId !== facilityId) return [];
+      const span = gridSpan(booking.startTime, booking.endTime, day);
+      return span ? [{ booking, ...span }] : [];
+    })
+    // Întâi cele cu culoar primit de la server, apoi în ordinea orei (stabil după id).
+    .sort((a, b) => Number(b.booking.lane !== null) - Number(a.booking.lane !== null) || a.from - b.from || a.booking.id.localeCompare(b.booking.id));
+
+  // busy[culoar][oră] = ocupat
+  const busy = Array.from({ length: POOL_LANES }, () => new Array<boolean>(HOUR_COUNT).fill(false));
+  const isFree = (lane: number, from: number, to: number) => busy[lane - 1].slice(from, to).every((taken) => !taken);
+
+  const placed: LaneBooking[] = [];
+  const overflow: AdminBooking[] = [];
+  for (const item of items) {
+    const preferred = item.booking.lane;
+    const lane =
+      preferred !== null && isFree(preferred, item.from, item.to)
+        ? preferred
+        : Array.from({ length: POOL_LANES }, (_, i) => i + 1).find((l) => isFree(l, item.from, item.to));
+    if (lane === undefined) {
+      overflow.push(item.booking);
+      continue;
+    }
+    for (let h = item.from; h < item.to; h++) busy[lane - 1][h] = true;
+    placed.push({ ...item, lane });
+  }
+  return { placed, overflow };
+}
+

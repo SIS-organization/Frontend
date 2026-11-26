@@ -13,6 +13,10 @@
 // și acțiunile apar jos, în cardul de selecție (Editează activitatea, Deblocare
 // anticipată, Istoric intervenție, Vezi detaliile rezervării, Anulează rezervarea).
 // „Blochează interval” deschide „Blocare pentru mentenanță”.
+//
+// Bazinul: în vederea cu toate facilitățile are o singură coloană cu „x / 4 culoare
+// libere” pe oră. Cu filtrul pe bazin (sau „Vezi culoarele”), același tabel arată
+// 4 coloane (Culoar 1–4), câte o rezervare pe oră; blocările acoperă toate culoarele.
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
@@ -40,6 +44,9 @@ import {
   bookingBlocks,
   entryBlocks,
   freeLanesByHour,
+  poolLanes,
+  type BookingBlock,
+  type EntryBlock,
 } from "../scheduleGrid";
 import {
   DAY_START_HOUR,
@@ -228,6 +235,97 @@ export default function AdminSchedulePage() {
     }
   }, [unknownFilter, params, setParams]);
 
+  // Vederea bazinului: filtrul arată doar bazinul → 4 coloane (Culoar 1–4) în același tabel.
+  // Cursurile / blocările pe bazin acoperă toate culoarele; rezervările stau pe culoarul lor.
+  const poolFacility = columns.length === 1 && lanes.has(columns[0].facilityId) ? columns[0] : null;
+  const pool = poolFacility ? poolLanes(bookings, poolFacility.facilityId, day) : null;
+  const poolBlocks = poolFacility ? entryBlocks(schedule?.entries ?? [], poolFacility.facilityId, day) : [];
+  const selectedLane = pool && selected ? (pool.placed.find((p) => p.booking.id === selected.id)?.lane ?? null) : null;
+  const LANE_NUMBERS = Array.from({ length: POOL_LANES }, (_, i) => i + 1);
+
+  /**
+   * Un bloc USV în grilă (curs, eveniment, mentenanță, reparație). Cele cu activitate
+   * sau incident se pot selecta; poziția vine din `entryBlocks` (cele suprapuse stau alăturat).
+   */
+  const renderEntry = ({ entry, from, to, index, of }: EntryBlock) => {
+    const style = BLOCK_STYLES[entry.blockType];
+    const incidentCode =
+      entry.blockType === "repair" && incident && entry.incidentId === incident.id ? incident.code : null;
+    const className = "absolute flex flex-col gap-0.5 overflow-hidden rounded-[7px] px-[10px] py-1 leading-[1.4]";
+    // Blocurile suprapuse (ex. o blocare peste un eveniment) stau unul lângă altul.
+    const position = {
+      top: from * ROW + 3,
+      height: (to - from) * ROW - 6,
+      left: `calc(5px + ${index} * (100% - 10px) / ${of})`,
+      width: `calc((100% - 10px) / ${of} - ${of > 1 ? 4 : 0}px)`,
+    };
+    const content = (
+      <>
+        <p className="truncate text-xs font-semibold">{entry.title}</p>
+        <p className="truncate text-[11px]">
+          {formatTimeRange(entry.startTime, entry.endTime)}
+          {incidentCode && ` · ${incidentCode}`} · {style.label}
+        </p>
+      </>
+    );
+    // Cursurile, evenimentele și blocările se SELECTEAZĂ (click din nou = deselectare);
+    // acțiunile pentru ele apar jos, în cardul de selecție.
+    const key = entry.activityId ? `a:${entry.activityId}` : entry.incidentId ? `i:${entry.incidentId}` : null;
+    if (key) {
+      const isSelected = key === selectedId;
+      return (
+        <button
+          key={`${entry.startTime}-${entry.title}`}
+          type="button"
+          aria-pressed={isSelected}
+          onClick={() => setSelectedId(isSelected ? null : key)}
+          // Selectat = același stil ca rezervările selectate (fundal închis, text alb).
+          className={`${className} text-left focus-visible:outline-2 focus-visible:outline-primary ${
+            isSelected ? "bg-primary text-white" : `${style.box} hover:brightness-95`
+          }`}
+          style={position}
+        >
+          {content}
+        </button>
+      );
+    }
+    return (
+      <div key={`${entry.startTime}-${entry.title}`} className={`${className} ${style.box}`} style={position}>
+        {content}
+      </div>
+    );
+  };
+
+  /**
+   * O rezervare în grilă: click = selectare (detaliile apar dedesubt). Textele vin de la
+   * server, dar React le afișează ca text simplu, deci nu pot rula cod (XSS).
+   */
+  const renderBooking = ({ booking, from, to, index, of }: BookingBlock) => {
+    const isSelected = `b:${booking.id}` === selectedId;
+    return (
+      <button
+        key={booking.id}
+        type="button"
+        aria-pressed={isSelected}
+        onClick={() => setSelectedId(isSelected ? null : `b:${booking.id}`)}
+        className={`absolute flex flex-col gap-0.5 overflow-hidden rounded-[7px] px-[10px] py-1 text-left leading-[1.4] ${
+          isSelected ? "bg-primary text-white" : "bg-[#e7f2ef] text-primary hover:bg-[#d7ebe6]"
+        }`}
+        style={{
+          top: from * ROW + 3,
+          height: (to - from) * ROW - 6,
+          left: `calc(5px + ${index} * (100% - 10px) / ${of})`,
+          width: `calc((100% - 10px) / ${of} - ${of > 1 ? 4 : 0}px)`,
+        }}
+      >
+        <span className="w-full truncate text-xs font-semibold">{booking.userName ?? "Rezervare"}</span>
+        <span className="w-full truncate text-[11px]">
+          {formatTimeRange(booking.startTime, booking.endTime)} · {booking.code}
+        </span>
+      </button>
+    );
+  };
+
   // 403 = contul a pierdut rolul de administrator între timp: nu mai afișăm nimic din orar.
   if (loaded?.error?.kind === "forbidden") {
     return (
@@ -242,9 +340,13 @@ export default function AdminSchedulePage() {
       <div className="flex flex-col items-start gap-4 md:flex-row md:items-end">
         <div className="flex min-w-0 flex-1 flex-col gap-1.5">
           <p className="text-[11px] font-bold text-primary">ADMINISTRATORUL BAZEI SPORTIVE</p>
-          <h1 className="text-[28px] leading-[1.16] text-heading">Orarul rezervărilor</h1>
+          <h1 className="text-[28px] leading-[1.16] text-heading">
+            {poolFacility ? "Orarul bazinului" : "Orarul rezervărilor"}
+          </h1>
           <p className="max-w-[710px] text-[13px] leading-normal text-muted">
-            Vezi fiecare rezervare pe interval orar, alături de cursuri și mentenanță.
+            {poolFacility
+              ? `Gestionează cele ${POOL_LANES} culoare independent. Fiecare culoar permite o rezervare de o oră.`
+              : "Vezi fiecare rezervare pe interval orar, alături de cursuri și mentenanță."}
           </p>
         </div>
         <Link
@@ -306,6 +408,7 @@ export default function AdminSchedulePage() {
               {allFacilities.map((f) => (
                 <option key={f.facilityId} value={f.facilityId}>
                   {f.name}
+                  {lanes.has(f.facilityId) && " · toate culoarele"}
                 </option>
               ))}
             </select>
@@ -337,18 +440,42 @@ export default function AdminSchedulePage() {
           <p role="status" className="text-xs text-[#926018]">{loaded.bookingsError}</p>
         )}
 
+        {pool && pool.overflow.length > 0 && (
+          <p role="status" className="text-xs text-[#926018]">
+            {pool.overflow.length} {pool.overflow.length === 1 ? "rezervare depășește" : "rezervări depășesc"} cele{" "}
+            {POOL_LANES} culoare în același interval și nu apar în grilă. Verifică-le în pagina Rezervări.
+          </p>
+        )}
         <div className={`overflow-x-auto ${loading ? "opacity-50" : ""}`} aria-busy={loading}>
           {loading && !schedule && <p className="py-10 text-center text-sm text-muted">Se încarcă orarul…</p>}
           {columns.length > 0 && (
-            <div style={{ minWidth: 56 + columns.length * 200 }}>
+            <div style={{ minWidth: 56 + (poolFacility ? POOL_LANES * 180 : columns.length * 200) }}>
               <div className="flex text-[14px] leading-[1.4] font-semibold">
                 <p className="w-14 shrink-0 text-[10px] text-muted">ORA</p>
-                {columns.map((f) => (
-                  <p key={f.facilityId} className="min-w-0 flex-1 truncate pr-2 text-heading">
-                    {f.name}
-                    {lanes.has(f.facilityId) && ` · ${POOL_LANES} culoare`}
-                  </p>
-                ))}
+                {poolFacility
+                  ? LANE_NUMBERS.map((lane) => (
+                      <p key={lane} className="min-w-0 flex-1 truncate pr-2 text-heading">
+                        Culoar {lane}
+                      </p>
+                    ))
+                  : columns.map((f) => (
+                      <p key={f.facilityId} className="flex min-w-0 flex-1 items-baseline gap-2 pr-2 text-heading">
+                        <span className="truncate">
+                          {f.name}
+                          {lanes.has(f.facilityId) && ` · ${POOL_LANES} culoare`}
+                        </span>
+                        {/* Bazinul: deschide vederea pe culoare (același tabel, filtrat pe bazin). */}
+                        {lanes.has(f.facilityId) && (
+                          <button
+                            type="button"
+                            onClick={() => update({ facilitate: f.facilityId })}
+                            className="shrink-0 text-[11px] font-semibold text-primary underline-offset-2 hover:underline"
+                          >
+                            Vezi culoarele
+                          </button>
+                        )}
+                      </p>
+                    ))}
               </div>
 
               {/* Grila: prima coloană are orele, apoi câte o coloană pe facilitate.
@@ -366,7 +493,42 @@ export default function AdminSchedulePage() {
                   ))}
                 </div>
 
-                {columns.map((facility, columnIndex) => {
+                {poolFacility && pool ? (
+                  <div className="relative min-w-0 flex-1 border-x border-[#dde5e2]">
+                    {/* Cele 4 culoare: liniile orelor, „Liber” și rezervarea fiecărei ore. */}
+                    <div className="absolute inset-0 flex">
+                      {LANE_NUMBERS.map((lane) => {
+                        const inLane = pool.placed.filter((p) => p.lane === lane);
+                        // O oră e liberă dacă nu are rezervare pe culoar și nu e acoperită de o blocare / activitate.
+                        const freeHours = Array.from({ length: HOUR_COUNT }, (_, h) => h).filter(
+                          (h) =>
+                            !inLane.some((p) => p.from <= h && h < p.to) &&
+                            !poolBlocks.some((b) => b.from <= h && h < b.to),
+                        );
+                        return (
+                          <div key={lane} className={`relative min-w-0 flex-1 ${lane > 1 ? "border-l border-[#dde5e2]" : ""}`}>
+                            {Array.from({ length: HOUR_COUNT + 1 }, (_, i) => (
+                              <div key={i} className="absolute inset-x-0 h-px bg-[#dde5e2]" style={{ top: Math.min(i * ROW, HOUR_COUNT * ROW - 1) }} />
+                            ))}
+                            {freeHours.map((h) => (
+                              <p
+                                key={h}
+                                className="absolute left-[14px] text-[11px] leading-[1.4] text-muted"
+                                style={{ top: h * ROW + (ROW - 15) / 2 }}
+                              >
+                                Liber
+                              </p>
+                            ))}
+                            {inLane.map(({ booking, from, to }) => renderBooking({ booking, from, to, index: 0, of: 1 }))}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {/* Cursurile, evenimentele și blocările pe bazin acoperă toate culoarele. */}
+                    {poolBlocks.map(renderEntry)}
+                  </div>
+                ) : (
+                columns.map((facility, columnIndex) => {
                   const blocks = entryBlocks(schedule?.entries ?? [], facility.facilityId, day);
                   const hasLanes = lanes.has(facility.facilityId);
                   return (
@@ -396,86 +558,14 @@ export default function AdminSchedulePage() {
                         )}
 
                       {/* Blocările USV: cursuri, evenimente, mentenanță, reparații. */}
-                      {blocks.map(({ entry, from, to, index, of }) => {
-                        const style = BLOCK_STYLES[entry.blockType];
-                        const incidentCode =
-                          entry.blockType === "repair" && incident && entry.incidentId === incident.id ? incident.code : null;
-                        const className = "absolute flex flex-col gap-0.5 overflow-hidden rounded-[7px] px-[10px] py-1 leading-[1.4]";
-                        // Blocurile suprapuse (ex. o blocare peste un eveniment) stau unul lângă altul.
-                        const position = {
-                          top: from * ROW + 3,
-                          height: (to - from) * ROW - 6,
-                          left: `calc(5px + ${index} * (100% - 10px) / ${of})`,
-                          width: `calc((100% - 10px) / ${of} - ${of > 1 ? 4 : 0}px)`,
-                        };
-                        const content = (
-                          <>
-                            <p className="truncate text-xs font-semibold">{entry.title}</p>
-                            <p className="truncate text-[11px]">
-                              {formatTimeRange(entry.startTime, entry.endTime)}
-                              {incidentCode && ` · ${incidentCode}`} · {style.label}
-                            </p>
-                          </>
-                        );
-                        // Cursurile, evenimentele și blocările se SELECTEAZĂ (click din nou = deselectare);
-                        // acțiunile pentru ele apar jos, în cardul de selecție.
-                        const key = entry.activityId ? `a:${entry.activityId}` : entry.incidentId ? `i:${entry.incidentId}` : null;
-                        if (key) {
-                          const isSelected = key === selectedId;
-                          return (
-                            <button
-                              key={`${entry.startTime}-${entry.title}`}
-                              type="button"
-                              aria-pressed={isSelected}
-                              onClick={() => setSelectedId(isSelected ? null : key)}
-                              // Selectat = același stil ca rezervările selectate (fundal închis, text alb).
-                              className={`${className} text-left focus-visible:outline-2 focus-visible:outline-primary ${
-                                isSelected ? "bg-primary text-white" : `${style.box} hover:brightness-95`
-                              }`}
-                              style={position}
-                            >
-                              {content}
-                            </button>
-                          );
-                        }
-                        return (
-                          <div key={`${entry.startTime}-${entry.title}`} className={`${className} ${style.box}`} style={position}>
-                            {content}
-                          </div>
-                        );
-                      })}
+                      {blocks.map(renderEntry)}
 
-                      {/* Rezervările: click = selectare (detaliile apar dedesubt). Textele vin de la
-                          server, dar React le afișează ca text simplu, deci nu pot rula cod (XSS). */}
-                      {!hasLanes &&
-                        bookingBlocks(bookings, facility.facilityId, day).map(({ booking, from, to, index, of }) => {
-                          const isSelected = `b:${booking.id}` === selectedId;
-                          return (
-                            <button
-                              key={booking.id}
-                              type="button"
-                              aria-pressed={isSelected}
-                              onClick={() => setSelectedId(isSelected ? null : `b:${booking.id}`)}
-                              className={`absolute flex flex-col gap-0.5 overflow-hidden rounded-[7px] px-[10px] py-1 text-left leading-[1.4] ${
-                                isSelected ? "bg-primary text-white" : "bg-[#e7f2ef] text-primary hover:bg-[#d7ebe6]"
-                              }`}
-                              style={{
-                                top: from * ROW + 3,
-                                height: (to - from) * ROW - 6,
-                                left: `calc(5px + ${index} * (100% - 10px) / ${of})`,
-                                width: `calc((100% - 10px) / ${of} - ${of > 1 ? 4 : 0}px)`,
-                              }}
-                            >
-                              <span className="w-full truncate text-xs font-semibold">{booking.userName ?? "Rezervare"}</span>
-                              <span className="w-full truncate text-[11px]">
-                                {formatTimeRange(booking.startTime, booking.endTime)} · {booking.code}
-                              </span>
-                            </button>
-                          );
-                        })}
+                      {/* Rezervările (la bazin: doar rezumatul „culoare libere”, mai sus). */}
+                      {!hasLanes && bookingBlocks(bookings, facility.facilityId, day).map(renderBooking)}
                     </div>
                   );
-                })}
+                })
+                )}
               </div>
             </div>
           )}
@@ -530,6 +620,7 @@ export default function AdminSchedulePage() {
           incident={incident}
           facilityFilter={facilityFilter}
           now={openedAt}
+          lane={selectedLane}
           onShowBooking={setDetailsId}
           onCancelBooking={(booking) => {
             setNotice(null);
@@ -544,7 +635,16 @@ export default function AdminSchedulePage() {
               Fiecare culoar poate avea o singură rezervare într-un interval de 60 minute. Maximum {POOL_LANES} rezervări
               simultane în bazin.
             </p>
-            <p className="text-xs">Alege facilitatea Bazin pentru a vedea rezervările și disponibilitatea pe fiecare culoar.</p>
+            {poolFacility ? (
+              <p className="text-xs">
+                Anularea eliberează doar culoarul rezervat. O închidere completă a bazinului blochează toate cele{" "}
+                {POOL_LANES} culoare.
+              </p>
+            ) : (
+              <p className="text-xs">
+                Alege „Vezi culoarele” sau facilitatea Bazin pentru a vedea rezervările și disponibilitatea pe fiecare culoar.
+              </p>
+            )}
           </section>
         )}
       </div>
@@ -570,12 +670,14 @@ function SelectionCard(props: {
   incident: ActiveIncident | null;
   facilityFilter: string | null;
   now: number;
+  /** Culoarul rezervării selectate (doar în vederea bazinului). */
+  lane: number | null;
   /** Deschide fereastra „Detaliile rezervării” pentru rezervarea dată. */
   onShowBooking: (bookingId: string) => void;
   /** Deschide fereastra „Anulează rezervarea” pentru rezervarea dată. */
   onCancelBooking: (booking: AdminBooking) => void;
 }) {
-  const { day, booking, entry, incident, facilityFilter, now, onShowBooking, onCancelBooking } = props;
+  const { day, booking, entry, incident, facilityFilter, now, lane, onShowBooking, onCancelBooking } = props;
   const query = new URLSearchParams(facilityFilter ? { zi: day, facilitate: facilityFilter } : { zi: day }).toString();
   const primary = "rounded-[7px] bg-primary px-3 py-2 text-xs font-semibold text-white hover:opacity-90";
 
@@ -644,8 +746,9 @@ function SelectionCard(props: {
       <p className="text-[10px] font-bold text-primary">REZERVARE SELECTATĂ</p>
       {booking ? (
         <>
+          {/* La bazin: „Nume · Culoar N” (ca în Figma); altfel numele facilității. */}
           <p className="text-lg text-heading">
-            {booking.userName ?? "Rezervare"} · {booking.facilityName}
+            {booking.userName ?? "Rezervare"} · {lane ? `Culoar ${lane}` : booking.facilityName}
           </p>
           <p className="text-sm text-muted">
             {formatDayMonth(day)} · {formatTimeRange(booking.startTime, booking.endTime)} · {BOOKING_STATUS[booking.status]}
