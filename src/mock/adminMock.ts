@@ -2,10 +2,11 @@
 //   GET  /admin/schedule, GET /admin/bookings
 //   POST /admin/activities/preview, POST /admin/activities
 //   GET / PUT / DELETE /admin/activities/{activityId}
+//   GET /admin/incidents, POST /admin/incidents/preview, POST /admin/incidents
 // Se comportă ca backend-ul: fără token → 401, alt rol decât administrator → 403,
 // date invalide → 400 / 422, suprapuneri → 409. Răspunsurile au forma din Swagger.
 //
-// Ține minte ce se schimbă (activități publicate, rezervări anulate) cât timp
+// Ține minte ce se schimbă (activități, blocări, rezervări anulate) cât timp
 // pagina e deschisă, ca fluxurile să poată fi testate cap-coadă fără backend.
 // La reîncărcarea paginii, totul revine la datele inițiale.
 
@@ -59,8 +60,6 @@ type MockEntry = {
   activityId?: string;
 };
 
-const INCIDENT_ID = "6f1c2d3e-0000-4000-8000-000000000204";
-
 /** Blocările inițiale ale unei zile (șablon fix, diferit doar sâmbăta și duminica). */
 function templateFor(date: string): MockEntry[] {
   const weekday = new Date(`${date}T12:00:00Z`).getUTCDay(); // 0 = duminică
@@ -73,15 +72,7 @@ function templateFor(date: string): MockEntry[] {
     { facilityId: FITNESS, from: 10, to: 13, title: "Pregătire fizică · FEFS", source: "Curs universitar · FEFS", blockType: "course" },
     { facilityId: TEREN, from: 12, to: 14, title: "Selecție echipă universitară", source: "Eveniment USV", blockType: "event" },
     { facilityId: FITNESS, from: 13, to: 14, title: "Igienizare programată", source: "Întreținere", blockType: "maintenance" },
-    {
-      facilityId: TEREN,
-      from: 14,
-      to: 16,
-      title: "Reparație instalație nocturnă",
-      source: "Incident INC-204",
-      blockType: "repair",
-      incidentId: INCIDENT_ID,
-    },
+    { facilityId: TEREN, from: 14, to: 16, title: "Reparație instalație nocturnă", source: "Echipa tehnică", blockType: "repair" },
   ];
 }
 
@@ -106,16 +97,98 @@ type MockActivity = {
   createdAt: string;
 };
 
+type IncidentType = "urgent_cleaning" | "scheduled_cleaning" | "repair" | "equipment_failure" | "maintenance";
+const INCIDENT_TYPES: IncidentType[] = ["urgent_cleaning", "scheduled_cleaning", "repair", "equipment_failure", "maintenance"];
+/** Titlul blocării în orar, după tipul incidentului. */
+const INCIDENT_TITLE: Record<IncidentType, string> = {
+  urgent_cleaning: "Igienizare urgentă",
+  scheduled_cleaning: "Igienizare programată",
+  repair: "Reparație",
+  equipment_failure: "Defecțiune echipament",
+  maintenance: "Mentenanță",
+};
+const CHANNELS = ["push", "email", "sms", "in_app"];
+
+type MockIncident = {
+  id: string;
+  code: string;
+  facilityId: string;
+  type: IncidentType;
+  title: string;
+  publicReason: string;
+  internalNote: string;
+  /** Începutul și sfârșitul planificat (ISO, ora României). */
+  start: string;
+  end: string;
+  status: "active" | "reopened_early" | "closed";
+  reopenedAt: string | null;
+  affectedBookings: number;
+  quotasRefunded: number;
+  notifiedUsers: number;
+  channels: string[];
+  createdAt: string;
+  /** Jurnalul incidentului (AuditLogEntry), folosit de ecranul de deblocare. */
+  log: { id: string; occurredAt: string; type: string; title: string; description: string }[];
+};
+
 const activities = new Map<string, MockActivity>();
+const incidents = new Map<string, MockIncident>();
 const bookings = new Map<string, MockBooking>();
 const seededDays = new Set<string>();
 let activityCounter = 120;
+let incidentCounter = 300;
 
 /** Prima dată când se cere o zi, îi creăm rezervările și activitățile din șablon. */
 function ensureDay(date: string) {
   if (seededDays.has(date)) return;
   seededDays.add(date);
   for (const booking of seedBookings(date)) bookings.set(booking.id, booking);
+  templateFor(date)
+    .filter((e) => e.blockType === "maintenance" || e.blockType === "repair")
+    .forEach((e, index) => {
+      const id = `inc-${date.replaceAll("-", "")}-${index + 1}`;
+      const end = at(date, e.to);
+      const repair = e.blockType === "repair";
+      incidents.set(id, {
+        id,
+        code: `INC-${date.slice(5, 7)}${date.slice(8, 10)}${index + 1}`,
+        facilityId: e.facilityId,
+        type: repair ? "repair" : "scheduled_cleaning",
+        title: e.title,
+        publicReason: repair
+          ? "Reparație și verificare de siguranță. Blocare aplicată de echipa tehnică."
+          : "Igienizarea programată a sălii și a echipamentelor.",
+        internalNote: "",
+        start: at(date, e.from),
+        end,
+        // Blocările din trecut sunt deja închise; restul sunt active.
+        status: Date.parse(end) <= Date.now() ? "closed" : "active",
+        reopenedAt: null,
+        affectedBookings: repair ? 2 : 0,
+        quotasRefunded: repair ? 2 : 0,
+        notifiedUsers: repair ? 2 : 0,
+        channels: ["push", "email"],
+        createdAt: at(addDays(date, -1), 16),
+        log: [
+          {
+            id: `${id}-log-1`,
+            occurredAt: at(addDays(date, -1), 16),
+            type: "incident_created",
+            title: repair ? "Blocare aplicată de echipa tehnică" : "Igienizare programată",
+            description: `${facilityName(e.facilityId)} · ${String(e.from).padStart(2, "0")}:00–${String(e.to).padStart(2, "0")}:00`,
+          },
+          ...(repair
+            ? [{
+                id: `${id}-log-2`,
+                occurredAt: at(addDays(date, -1), 16),
+                type: "notification_sent",
+                title: "2 persoane notificate",
+                description: "Alerte trimise prin push și e-mail; cotele au fost restituite.",
+              }]
+            : []),
+        ],
+      });
+    });
   templateFor(date)
     .filter((e) => e.blockType === "course" || e.blockType === "event")
     .forEach((e, index) => {
@@ -156,9 +229,39 @@ function activitiesOn(date: string) {
   return [...activities.values()].filter((a) => a.status === "published" && occurrences(a).includes(date));
 }
 
-/** Toate blocările unei zile: mentenanța din șablon + activitățile publicate. */
+/** Sfârșitul efectiv al unui incident: ora deblocării anticipate, dacă a existat. */
+const effectiveEnd = (i: MockIncident) => i.reopenedAt ?? i.end;
+
+/**
+ * Incidentele care blochează ceva într-o zi, tăiate la programul zilei (08–21).
+ * Un incident de mai multe zile apare în fiecare zi pe care o acoperă.
+ */
+function incidentEntriesOn(date: string): MockEntry[] {
+  ensureDay(date);
+  const dayStart = Date.parse(at(date, 8));
+  const dayEnd = Date.parse(at(date, 21));
+  return [...incidents.values()]
+    .filter((i) => i.status !== "closed" || Date.parse(effectiveEnd(i)) > Date.parse(i.start))
+    .filter((i) => Date.parse(i.start) < dayEnd && Date.parse(effectiveEnd(i)) > dayStart)
+    .map((i) => {
+      const from = Date.parse(i.start) <= dayStart ? 8 : (localSlot(i.start)?.hour ?? 8);
+      const to = Date.parse(effectiveEnd(i)) >= dayEnd ? 21 : (localSlot(effectiveEnd(i))?.hour ?? 21);
+      return {
+        facilityId: i.facilityId,
+        from,
+        to,
+        title: i.title,
+        source: `Incident ${i.code}`,
+        blockType: i.type === "repair" || i.type === "equipment_failure" ? ("repair" as const) : ("maintenance" as const),
+        incidentId: i.id,
+      };
+    })
+    .filter((e) => e.to > e.from);
+}
+
+/** Toate blocările unei zile: incidentele (mentenanță, reparații) + activitățile publicate. */
 function entriesFor(date: string): MockEntry[] {
-  const fixed = templateFor(date).filter((e) => e.blockType === "maintenance" || e.blockType === "repair");
+  const fixed = incidentEntriesOn(date);
   const published = activitiesOn(date).map((a) => ({
     facilityId: a.facilityId,
     from: a.from,
@@ -303,9 +406,8 @@ function conflictsFor(input: ReturnType<typeof parseActivityBody>, ignoreId?: st
       if (a.id !== ignoreId && a.facilityId === input.facilityId && overlaps(input.from, input.to, a.from, a.to) &&
           !overlapping.includes(a)) overlapping.push(a);
     }
-    maintenance ??= templateFor(date).find(
-      (e) => (e.blockType === "maintenance" || e.blockType === "repair") && e.facilityId === input.facilityId &&
-        overlaps(input.from, input.to, e.from, e.to),
+    maintenance ??= incidentEntriesOn(date).find(
+      (e) => e.facilityId === input.facilityId && overlaps(input.from, input.to, e.from, e.to),
     ) ?? null;
   }
   return { affected, overlapping, maintenance };
@@ -425,6 +527,193 @@ function cancelActivity(id: string, scope: string | null) {
   return undefined; // 204 No Content
 }
 
+// ---------------------------------------------------------------------------
+// Incidente / blocări de mentenanță
+// ---------------------------------------------------------------------------
+
+/** Forma `Incident` din contract. */
+function incidentJson(i: MockIncident) {
+  return {
+    id: i.id,
+    code: i.code,
+    facility: { id: i.facilityId, name: facilityName(i.facilityId) },
+    type: i.type,
+    status: i.status,
+    publicReason: i.publicReason,
+    startTime: i.start,
+    endTime: i.end,
+    reopenedAt: i.reopenedAt,
+    affectedBookings: i.affectedBookings,
+    quotasRefunded: i.quotasRefunded,
+    notifiedUsers: i.notifiedUsers,
+    pendingNotifications: 0,
+    createdBy: { id: "4", name: "Administratorul Bazei Sportive" },
+    createdAt: i.createdAt,
+  };
+}
+
+/** O blocare durează cel mult o săptămână; pentru mai mult se creează blocări noi. */
+const MAX_BLOCK_HOURS = 7 * 24;
+
+/** Verifică un corp IncidentCreate (aceleași reguli pentru previzualizare și creare). */
+function parseIncidentBody(raw: unknown) {
+  if (!isObject(raw)) fail(400, "VALIDATION_ERROR", "Corpul cererii lipsește.");
+  const facilityId = raw.facilityId;
+  if (typeof facilityId !== "string" || !Object.values(facilityIds).includes(facilityId)) {
+    fail(400, "VALIDATION_ERROR", "Facilitate necunoscută.");
+  }
+  if (!INCIDENT_TYPES.includes(raw.type as IncidentType)) fail(400, "VALIDATION_ERROR", "Tip de blocare necunoscut.");
+  const publicReason = textField(raw, "publicReason", 5, 300, "Motivul vizibil");
+  const internalNote = raw.internalNote === undefined ? "" : textField(raw, "internalNote", 0, 500, "Nota internă");
+  const start = localSlot(raw.startTime);
+  const end = localSlot(raw.endTime);
+  if (!start || !end) fail(422, "INVALID_TIME_RANGE", "Începutul și sfârșitul trebuie să fie la ore fixe.");
+  const startMs = Date.parse(String(raw.startTime));
+  const endMs = Date.parse(String(raw.endTime));
+  if (endMs <= startMs) fail(422, "INVALID_TIME_RANGE", "Sfârșitul trebuie să fie după început.");
+  if (endMs <= Date.now()) fail(422, "INVALID_TIME_RANGE", "Intervalul s-a încheiat deja.");
+  if (startMs < Date.now() - 3_600_000) fail(422, "INVALID_TIME_RANGE", "Începutul nu poate fi în trecut.");
+  if ((endMs - startMs) / 3_600_000 > MAX_BLOCK_HOURS) fail(422, "INVALID_TIME_RANGE", "O blocare durează cel mult 7 zile.");
+  const channels = Array.isArray(raw.notifyChannels) ? raw.notifyChannels : ["push", "email"];
+  if (channels.some((c) => typeof c !== "string" || !CHANNELS.includes(c))) fail(400, "VALIDATION_ERROR", "Canal de notificare necunoscut.");
+  return {
+    facilityId: facilityId as string,
+    type: raw.type as IncidentType,
+    publicReason,
+    internalNote,
+    start: at(start.date, start.hour),
+    end: at(end.date, end.hour),
+    startMs,
+    endMs,
+    channels: [...new Set(channels as string[])],
+    confirmed: raw.confirmed === true,
+  };
+}
+
+/** Zilele (YYYY-MM-DD) dintre două momente, ca să încărcăm rezervările lor. */
+function daysBetween(startIso: string, endIso: string) {
+  const first = localSlot(startIso)!.date;
+  const last = localSlot(endIso)!.date;
+  const days: string[] = [];
+  for (let d = first; d <= last; d = addDays(d, 1)) days.push(d);
+  return days;
+}
+
+/** Ce ar afecta blocarea: rezervările viitoare suprapuse și o eventuală altă blocare. */
+function incidentImpact(input: ReturnType<typeof parseIncidentBody>) {
+  const affected: MockBooking[] = [];
+  for (const date of daysBetween(input.start, input.end)) {
+    for (const b of bookingsOn(date)) {
+      if (b.facility.id === input.facilityId && ACTIVE_BOOKING.includes(b.status) &&
+          Date.parse(b.startTime) < input.endMs && Date.parse(b.endTime) > input.startMs &&
+          Date.parse(b.endTime) > Date.now()) affected.push(b);
+    }
+  }
+  const overlapping = [...incidents.values()].find(
+    (i) => i.facilityId === input.facilityId && i.status === "active" &&
+      Date.parse(i.start) < input.endMs && Date.parse(effectiveEnd(i)) > input.startMs,
+  );
+  if (overlapping) {
+    fail(409, "INCIDENT_OVERLAP", `Facilitatea este deja blocată în acest interval (${overlapping.code}). Modifică intervalul.`);
+  }
+  return affected.sort((a, b) => a.startTime.localeCompare(b.startTime));
+}
+
+function previewIncident(raw: unknown) {
+  const input = parseIncidentBody(raw);
+  const affected = incidentImpact(input);
+  return {
+    facilityId: input.facilityId,
+    startTime: input.start,
+    endTime: input.end,
+    durationHours: (input.endMs - input.startMs) / 3_600_000,
+    affectedBookings: affected.map((b) => ({
+      bookingId: b.id,
+      code: b.code,
+      userName: b.user.name,
+      userRole: b.user.role,
+      startTime: b.startTime,
+      endTime: b.endTime,
+      quotaWillBeRefunded: b.usesIncludedQuota,
+    })),
+    affectedCount: affected.length,
+    quotaRefunds: affected.filter((b) => b.usesIncludedQuota).length,
+    // În mock: o persoană pe lista de așteptare pentru fiecare zi cu rezervări afectate.
+    waitlistInformed: new Set(affected.map((b) => b.startTime.slice(0, 10))).size,
+    channels: input.channels,
+    impactToken: affected.map((b) => b.id).join(","),
+  };
+}
+
+function createIncident(raw: unknown) {
+  const input = parseIncidentBody(raw);
+  if (!input.confirmed) fail(422, "CONFIRMATION_REQUIRED", "Blocarea trebuie confirmată explicit (confirmed: true).");
+  // Reverificăm impactul la salvare: între timp pot apărea rezervări noi.
+  const affected = incidentImpact(input);
+  const now = new Date().toISOString();
+  for (const b of affected) {
+    b.status = "cancelled";
+    b.cancelledBy = "maintenance";
+    b.cancelReason = input.publicReason;
+    b.cancelledAt = now;
+    b.quotaRefunded = b.usesIncludedQuota;
+  }
+  incidentCounter += 1;
+  const id = `inc-new-${incidentCounter}`;
+  const refunds = affected.filter((b) => b.usesIncludedQuota).length;
+  const people = new Set(affected.map((b) => b.user.id)).size;
+  const incident: MockIncident = {
+    id,
+    code: `INC-${incidentCounter}`,
+    facilityId: input.facilityId,
+    type: input.type,
+    title: INCIDENT_TITLE[input.type],
+    publicReason: input.publicReason,
+    internalNote: input.internalNote,
+    start: input.start,
+    end: input.end,
+    status: "active",
+    reopenedAt: null,
+    affectedBookings: affected.length,
+    quotasRefunded: refunds,
+    notifiedUsers: people,
+    channels: input.channels,
+    createdAt: now,
+    log: [
+      { id: `${id}-log-1`, occurredAt: now, type: "incident_created", title: "Blocare aplicată", description: `${facilityName(input.facilityId)} · ${input.publicReason}` },
+      { id: `${id}-log-2`, occurredAt: now, type: "bookings_cancelled", title: `${affected.length} rezervări anulate`, description: `${refunds} cote restituite.` },
+      { id: `${id}-log-3`, occurredAt: now, type: "notification_sent", title: `${people} persoane notificate`, description: `Canale: ${input.channels.join(", ") || "—"}.` },
+    ],
+  };
+  incidents.set(id, incident);
+  return incidentJson(incident);
+}
+
+/** GET /admin/incidents: filtrare după stare, facilitate și zile, cu paginare. */
+function listIncidents(query: URLSearchParams) {
+  const status = query.get("status");
+  if (status && !["active", "reopened_early", "closed"].includes(status)) fail(400, "VALIDATION_ERROR", "Stare necunoscută.");
+  const from = query.get("from") ?? today();
+  const to = query.get("to") ?? from;
+  if (!validDate(from) || !validDate(to) || to < from) fail(400, "VALIDATION_ERROR", "Interval de date invalid.");
+  const page = Number(query.get("page") ?? 1);
+  const pageSize = Number(query.get("pageSize") ?? 20);
+  if (!Number.isInteger(page) || page < 1 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+    fail(400, "VALIDATION_ERROR", "Paginare invalidă.");
+  }
+  for (let d = from; d <= to; d = addDays(d, 1)) ensureDay(d);
+  const facilityId = query.get("facilityId");
+  const rangeStart = Date.parse(at(from, 0));
+  const rangeEnd = Date.parse(at(addDays(to, 1), 0));
+  const items = [...incidents.values()]
+    .filter((i) => (!status || i.status === status) && (!facilityId || i.facilityId === facilityId))
+    .filter((i) => Date.parse(i.start) < rangeEnd && Date.parse(effectiveEnd(i)) > rangeStart)
+    .sort((a, b) => a.start.localeCompare(b.start))
+    .map(incidentJson);
+  const startIndex = (page - 1) * pageSize;
+  return { page, pageSize, totalItems: items.length, totalPages: Math.ceil(items.length / pageSize), items: items.slice(startIndex, startIndex + pageSize) };
+}
+
 function scheduleFor(date: string, facilityId: string | null) {
   const entries = entriesFor(date);
   const dayLabel =
@@ -434,10 +723,16 @@ function scheduleFor(date: string, facilityId: string | null) {
   const facilitiesStatus = facilities.map((f) => {
     const id = facilityIds[f.id];
     const own = entries.filter((e) => e.facilityId === id);
-    const repair = own.find((e) => e.blockType === "repair");
+    const block = own.find((e) => e.blockType === "repair" || e.blockType === "maintenance");
     const course = own.find((e) => e.blockType === "course" || e.blockType === "event");
-    if (repair) {
-      return { facilityId: id, name: f.name, status: "under_maintenance", statusLabel: "Reparație activă", note: `${dayLabel} · ${range(repair)}` };
+    if (block) {
+      return {
+        facilityId: id,
+        name: f.name,
+        status: "under_maintenance",
+        statusLabel: block.blockType === "repair" ? "Reparație activă" : "Mentenanță programată",
+        note: `${dayLabel} · ${range(block)}`,
+      };
     }
     if (id === SALA && course) {
       return { facilityId: id, name: f.name, status: "university_activity", statusLabel: "Activități USV", note: `Curs · ${range(course)}` };
@@ -451,7 +746,12 @@ function scheduleFor(date: string, facilityId: string | null) {
     };
   });
 
-  const repair = entries.find((e) => e.blockType === "repair");
+  // Incidentul afișat în orar: primul activ din zi (cel în desfășurare are prioritate).
+  const dayIncidents = entries
+    .filter((e) => e.incidentId)
+    .map((e) => incidents.get(e.incidentId!)!)
+    .filter((i) => i.status === "active")
+    .sort((a, b) => Number(Date.parse(b.start) <= Date.now()) - Number(Date.parse(a.start) <= Date.now()) || Date.parse(a.start) - Date.parse(b.start));
   return {
     date,
     facilities: facilitiesStatus,
@@ -468,22 +768,7 @@ function scheduleFor(date: string, facilityId: string | null) {
         activityId: e.activityId ?? null,
         incidentId: e.incidentId ?? null,
       })),
-    activeIncident: repair
-      ? {
-          id: INCIDENT_ID,
-          code: "INC-204",
-          facility: { id: TEREN, name: facilityName(TEREN) },
-          type: "repair",
-          status: "active",
-          publicReason: "Reparație instalație nocturnă",
-          startTime: at(date, repair.from),
-          endTime: at(date, repair.to),
-          affectedBookings: 0,
-          quotasRefunded: 0,
-          notifiedUsers: 0,
-          pendingNotifications: 0,
-        }
-      : null,
+    activeIncident: dayIncidents[0] ? incidentJson(dayIncidents[0]) : null,
   };
 }
 
@@ -583,6 +868,10 @@ export function adminMockHandler(path: string, method: HttpMethod, token: string
 
   if (route === "/admin/activities/preview" && method === "POST") return previewActivity(body);
   if (route === "/admin/activities" && method === "POST") return createActivity(body);
+
+  if (route === "/admin/incidents" && method === "GET") return listIncidents(query);
+  if (route === "/admin/incidents/preview" && method === "POST") return previewIncident(body);
+  if (route === "/admin/incidents" && method === "POST") return createIncident(body);
 
   // /admin/activities/{activityId}: id-ul trebuie să aibă forma permisă (fără „/”, „..” etc.).
   const activityRoute = /^\/admin\/activities\/([A-Za-z0-9_-]{1,64})$/.exec(route);

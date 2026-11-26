@@ -14,6 +14,7 @@ import {
   bucharestParts,
   formatDayMonth,
   formatDayMonthYear,
+  formatShortDate,
   formatTimeRange,
   hourLabel,
   isValidIsoDate,
@@ -21,9 +22,9 @@ import {
   todayInBucharest,
 } from "../time";
 
-const input =
+export const input =
   "h-11 w-full rounded-lg border border-[#dde5e2] bg-white px-3 text-sm text-heading outline-none focus:border-primary disabled:bg-bg";
-const label = "text-xs font-semibold text-muted";
+export const label = "text-xs font-semibold text-muted";
 export const secondaryButton =
   "flex h-10 items-center rounded-lg border border-[#dde5e2] bg-white px-4 text-[13px] font-semibold text-heading hover:bg-bg disabled:opacity-50";
 export const primaryButton =
@@ -33,7 +34,7 @@ export function Card({ children, className = "" }: { children: ReactNode; classN
   return <section className={`rounded-xl border border-[#dde5e2] bg-white ${className}`}>{children}</section>;
 }
 
-function Field({ title, error, children, htmlFor }: { title: string; error?: string; children: ReactNode; htmlFor?: string }) {
+export function Field({ title, error, children, htmlFor }: { title: string; error?: string; children: ReactNode; htmlFor?: string }) {
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-1.5">
       <label htmlFor={htmlFor} className={label}>
@@ -46,7 +47,7 @@ function Field({ title, error, children, htmlFor }: { title: string; error?: str
 }
 
 /** Listă derulantă cu săgeata din Figma. */
-function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
+export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
   return (
     <div className="relative min-w-0 flex-1">
       <select {...props} className={`${input} appearance-none pr-8`} />
@@ -55,12 +56,20 @@ function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
   );
 }
 
-/** Câmp de dată afișat ca „22 octombrie 2026”, cu selectorul nativ al browserului. */
-function DateInput(props: { id: string; value: string; min: string; disabled?: boolean; onChange: (value: string) => void }) {
-  const { id, value, min, disabled, onChange } = props;
+/** Câmp de dată afișat ca „22 octombrie 2026” (sau scurt, „22 oct. 2026”), cu selectorul nativ al browserului. */
+export function DateInput(props: {
+  id: string;
+  value: string;
+  min: string;
+  disabled?: boolean;
+  /** Afișare scurtă („30 nov. 2026”), pentru câmpurile înguste. */
+  short?: boolean;
+  onChange: (value: string) => void;
+}) {
+  const { id, value, min, disabled, short, onChange } = props;
   return (
     <div className={`${disabled ? input.replace("bg-white", "bg-bg") : input} relative flex items-center`}>
-      {isValidIsoDate(value) ? formatDayMonthYear(value) : <span className="text-muted">Alege data</span>}
+      {isValidIsoDate(value) ? (short ? formatShortDate(value) : formatDayMonthYear(value)) : <span className="text-muted">Alege data</span>}
       <input
         id={id}
         type="date"

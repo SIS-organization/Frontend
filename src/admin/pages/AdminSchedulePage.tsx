@@ -9,7 +9,8 @@
 //
 // „Adaugă activitate USV” deschide formularul de activitate, cu ziua și
 // facilitatea alese aici deja completate. Un click pe un curs sau un eveniment
-// USV din grilă deschide „Gestionează activitatea USV”. Celelalte acțiuni (blochează interval,
+// USV din grilă deschide „Gestionează activitatea USV”, iar „Blochează interval”
+// deschide „Blocare pentru mentenanță”. Celelalte acțiuni (blochează interval,
 // detalii) sunt afișate ca în Figma, dar inactive: țin de pașii următori.
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
@@ -301,9 +302,13 @@ export default function AdminSchedulePage() {
             </select>
             <ChevronDownIcon className="pointer-events-none absolute top-1/2 right-3 size-3.5 -translate-y-1/2 text-heading" />
           </div>
-          <button type="button" className={toolButton} disabled title={NOT_READY}>
+          {/* Deschide „Blocare pentru mentenanță” cu ziua și facilitatea alese aici. */}
+          <Link
+            to={`/admin/orar/blocare?${new URLSearchParams(facilityFilter ? { zi: day, facilitate: facilityFilter } : { zi: day }).toString()}`}
+            className={`${toolButton} flex items-center`}
+          >
             Blochează interval
-          </button>
+          </Link>
         </div>
 
         <div className="flex flex-wrap items-start gap-4 leading-[1.4]">
@@ -382,12 +387,18 @@ export default function AdminSchedulePage() {
                         )}
 
                       {/* Blocările USV: cursuri, evenimente, mentenanță, reparații. */}
-                      {blocks.map(({ entry, from, to }) => {
+                      {blocks.map(({ entry, from, to, index, of }) => {
                         const style = BLOCK_STYLES[entry.blockType];
                         const incidentCode =
                           entry.blockType === "repair" && incident && entry.incidentId === incident.id ? incident.code : null;
-                        const className = `absolute inset-x-[5px] flex flex-col gap-0.5 overflow-hidden rounded-[7px] px-[10px] py-1 leading-[1.4] ${style.box}`;
-                        const position = { top: from * ROW + 3, height: (to - from) * ROW - 6 };
+                        const className = `absolute flex flex-col gap-0.5 overflow-hidden rounded-[7px] px-[10px] py-1 leading-[1.4] ${style.box}`;
+                        // Blocurile suprapuse (ex. o blocare peste un eveniment) stau unul lângă altul.
+                        const position = {
+                          top: from * ROW + 3,
+                          height: (to - from) * ROW - 6,
+                          left: `calc(5px + ${index} * (100% - 10px) / ${of})`,
+                          width: `calc((100% - 10px) / ${of} - ${of > 1 ? 4 : 0}px)`,
+                        };
                         const content = (
                           <>
                             <p className="truncate text-xs font-semibold">{entry.title}</p>

@@ -128,3 +128,43 @@ export function LogOutIcon(props: IconProps) {
     </Icon>
   );
 }
+
+/** Avertisment (antetul cardului „Blochează o facilitate”). */
+export function TriangleAlertIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" />
+      <path d="M12 9v4" />
+      <path d="M12 17h.01" />
+    </Icon>
+  );
+}
+
+/** Lacăt deschis („Deblocare anticipată”). */
+export function LockOpenIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+      <path d="M7 11V7a5 5 0 0 1 9.9-1" />
+    </Icon>
+  );
+}
+
+/** Bifă simplă (pașii fluxului, canalele de notificare). */
+export function CheckIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M20 6 9 17l-5-5" />
+    </Icon>
+  );
+}
+
+/** Bifă dublă („persoane notificate · alerte trimise”). */
+export function CheckCheckIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M18 6 7 17l-5-5" />
+      <path d="m22 10-7.5 7.5L13 16" />
+    </Icon>
+  );
+}

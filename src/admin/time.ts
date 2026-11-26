@@ -103,6 +103,11 @@ export function formatDayMonthYear(date: string): string {
   return asDate(date).toLocaleDateString("ro-RO", { timeZone: "UTC", day: "numeric", month: "long", year: "numeric" });
 }
 
+/** „20 oct. 2026” — pentru câmpurile înguste (ex. formularul de blocare). */
+export function formatShortDate(date: string): string {
+  return asDate(date).toLocaleDateString("ro-RO", { timeZone: "UTC", day: "numeric", month: "short", year: "numeric" });
+}
+
 /** „20 octombrie” */
 export function formatDayMonth(date: string): string {
   return asDate(date).toLocaleDateString("ro-RO", { timeZone: "UTC", day: "numeric", month: "long" });

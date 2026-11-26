@@ -429,3 +429,145 @@ export type CancelScope = "this_occurrence" | "series";
 export async function cancelActivity(id: string, scope: CancelScope) {
   await apiRequest<unknown>(`/admin/activities/${idPath(id)}?scope=${scope}`, "DELETE");
 }
+
+// ===========================================================================
+// Incidente / blocări de mentenanță — /admin/incidents
+// ===========================================================================
+
+export type IncidentType = "urgent_cleaning" | "scheduled_cleaning" | "repair" | "equipment_failure" | "maintenance";
+export const INCIDENT_TYPES: readonly IncidentType[] = [
+  "urgent_cleaning",
+  "scheduled_cleaning",
+  "repair",
+  "equipment_failure",
+  "maintenance",
+];
+/** Etichetele din lista „Motivul blocării”. */
+export const INCIDENT_TYPE_LABEL: Record<IncidentType, string> = {
+  urgent_cleaning: "Mentenanță · igienizare urgentă",
+  scheduled_cleaning: "Mentenanță · igienizare programată",
+  repair: "Reparație",
+  equipment_failure: "Defecțiune echipament",
+  maintenance: "Mentenanță generală",
+};
+
+/** Canalele prin care sunt anunțate persoanele afectate. */
+export type Channel = "sms" | "push" | "email" | "in_app";
+const CHANNELS: readonly Channel[] = ["sms", "push", "email", "in_app"];
+export const CHANNEL_LABEL: Record<Channel, string> = { sms: "SMS", push: "Push", email: "E-mail", in_app: "În aplicație" };
+
+/** Corpul pentru previzualizare și creare (`IncidentCreate` din contract). */
+export type IncidentInput = {
+  facilityId: string;
+  type: IncidentType;
+  publicReason: string;
+  startTime: string;
+  endTime: string;
+  notifyChannels: Channel[];
+};
+
+/** Un incident (`Incident` din contract), cu valorile verificate. */
+export type Incident = {
+  id: string;
+  code: string;
+  facilityId: string | null;
+  facilityName: string | null;
+  type: IncidentType | null;
+  status: "active" | "reopened_early" | "closed";
+  publicReason: string;
+  startTime: string;
+  endTime: string;
+  reopenedAt: string | null;
+  affectedBookings: number;
+  quotasRefunded: number;
+  notifiedUsers: number;
+  pendingNotifications: number;
+};
+
+/** Impactul calculat de server înainte de confirmare (`IncidentPreview`). */
+export type IncidentPreview = {
+  affectedBookings: AffectedBooking[];
+  affectedCount: number;
+  quotaRefunds: number;
+  waitlistInformed: number;
+};
+
+/** Număr întreg ≥ 0; orice altceva devine 0. */
+const count = (value: unknown) => (typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : 0);
+
+export function parseIncidentRecord(raw: unknown): Incident | null {
+  if (!isObject(raw)) return null;
+  const id = identifier(raw.id);
+  const code = text(raw.code);
+  const status = oneOf(raw.status, ["active", "reopened_early", "closed"] as const);
+  const startTime = dateTime(raw.startTime);
+  const endTime = dateTime(raw.endTime);
+  if (!id || !code || !status || !validInterval(startTime, endTime)) return null;
+  const facility = isObject(raw.facility) ? raw.facility : null;
+  return {
+    id,
+    code,
+    facilityId: facility ? identifier(facility.id) : null,
+    facilityName: facility ? text(facility.name) : null,
+    type: oneOf(raw.type, INCIDENT_TYPES),
+    status,
+    publicReason: text(raw.publicReason) ?? "",
+    startTime: startTime!,
+    endTime: endTime!,
+    reopenedAt: dateTime(raw.reopenedAt),
+    affectedBookings: count(raw.affectedBookings),
+    quotasRefunded: count(raw.quotasRefunded),
+    notifiedUsers: count(raw.notifiedUsers),
+    pendingNotifications: count(raw.pendingNotifications),
+  };
+}
+
+function parseIncidentPreview(raw: unknown): IncidentPreview {
+  if (!isObject(raw)) throw new Error("Răspuns invalid la calculul impactului.");
+  const affected = list(raw.affectedBookings)
+    .map(parseAffected)
+    .filter((b): b is AffectedBooking => b !== null);
+  return {
+    affectedBookings: affected,
+    affectedCount: typeof raw.affectedCount === "number" ? count(raw.affectedCount) : affected.length,
+    quotaRefunds: count(raw.quotaRefunds),
+    waitlistInformed: count(raw.waitlistInformed),
+  };
+}
+
+/** Păstrăm doar canalele cunoscute, fără dubluri. */
+function cleanChannels(channels: Channel[]) {
+  return CHANNELS.filter((c) => channels.includes(c));
+}
+
+/**
+ * POST /admin/incidents/preview — „Ciornă”: calculează impactul blocării
+ * (rezervări anulate, cote restituite) fără să modifice nimic.
+ */
+export async function previewIncident(input: IncidentInput, signal?: AbortSignal) {
+  const body = { ...input, notifyChannels: cleanChannels(input.notifyChannels) };
+  return parseIncidentPreview(await apiRequest<unknown>("/admin/incidents/preview", "POST", body, {}, { signal }));
+}
+
+/**
+ * POST /admin/incidents — aplică blocarea. Serverul cere `confirmed: true`
+ * (confirmarea explicită a administratorului) și reverifică impactul.
+ */
+export async function createIncident(input: IncidentInput) {
+  const body = { ...input, notifyChannels: cleanChannels(input.notifyChannels), confirmed: true };
+  const incident = parseIncidentRecord(await apiRequest<unknown>("/admin/incidents", "POST", body));
+  if (!incident) throw new Error("Răspuns invalid la aplicarea blocării.");
+  return incident;
+}
+
+/** GET /admin/incidents?status=active&from=&to= — incidentele active dintr-o zi. */
+export async function getActiveIncidents(date: string, signal?: AbortSignal) {
+  if (!isValidIsoDate(date)) throw new Error("Dată invalidă.");
+  const query = new URLSearchParams({ status: "active", from: date, to: date, page: "1", pageSize: "20" });
+  const raw = await apiRequest<unknown>(`/admin/incidents?${query.toString()}`, "GET", undefined, {}, { signal });
+  if (!isObject(raw)) throw new Error("Răspuns invalid pentru incidente.");
+  return list(raw.items)
+    .map(parseIncidentRecord)
+    .filter((i): i is Incident => i !== null);
+}
+

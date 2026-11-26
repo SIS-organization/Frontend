@@ -6,14 +6,29 @@ import { DAY_END_HOUR, DAY_START_HOUR, gridSpan } from "./time";
 export const HOUR_COUNT = DAY_END_HOUR - DAY_START_HOUR; // 13 intervale de 60 de minute
 export const POOL_LANES = 4; // regula bazinului: 4 culoare, câte o rezervare pe culoar și oră
 
-export type EntryBlock = { entry: ScheduleEntry; from: number; to: number };
+/** `index` / `of`: poziția blocului printre blocurile suprapuse (ca să stea unul lângă altul). */
+export type EntryBlock = { entry: ScheduleEntry; from: number; to: number; index: number; of: number };
 export type BookingBlock = { booking: AdminBooking; from: number; to: number; index: number; of: number };
 
+/** Ordinea în care stau blocurile suprapuse: întâi blocările (mentenanță, reparații). */
+const BLOCK_ORDER: Record<BlockType, number> = { repair: 0, maintenance: 1, course: 2, event: 3 };
+
+/**
+ * Blocările USV ale unei facilități (cursuri, evenimente, mentenanță).
+ * Cele care se suprapun stau una lângă alta, ca niciuna să nu o acopere pe alta.
+ */
 export function entryBlocks(entries: ScheduleEntry[], facilityId: string, day: string): EntryBlock[] {
-  return entries.flatMap((entry) => {
-    if (entry.facilityId !== facilityId) return [];
-    const span = gridSpan(entry.startTime, entry.endTime, day);
-    return span ? [{ entry, ...span }] : [];
+  const placed = entries
+    .flatMap((entry) => {
+      if (entry.facilityId !== facilityId) return [];
+      const span = gridSpan(entry.startTime, entry.endTime, day);
+      return span ? [{ entry, ...span }] : [];
+    })
+    .sort((a, b) => BLOCK_ORDER[a.entry.blockType] - BLOCK_ORDER[b.entry.blockType] || a.from - b.from);
+
+  return placed.map((block) => {
+    const overlapping = placed.filter((other) => other.from < block.to && block.from < other.to);
+    return { ...block, index: overlapping.indexOf(block), of: overlapping.length };
   });
 }
 
