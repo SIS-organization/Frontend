@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import * as authApi from "../api/auth";
 import type { AuthSession, LoginResponse } from "../api/auth";
-import { AUTH_TOKEN_KEY, getAuthToken } from "../api/client";
+import { ADMIN_ACTIVITY_KEY, AUTH_TOKEN_KEY, getAuthToken } from "../api/client";
 import { AuthContext, type AuthContextValue } from "./useAuth";
 
 function saveToken(token: string | null) {
   try {
+    // La orice login sau logout, ora ultimei activități din admin pornește de la zero,
+    // ca o oră veche (din sesiunea anterioară) să nu delogheze o sesiune nouă.
+    localStorage.removeItem(ADMIN_ACTIVITY_KEY);
     if (token) {
       localStorage.setItem(AUTH_TOKEN_KEY, token);
     } else {

@@ -24,6 +24,12 @@ export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localho
 
 export const AUTH_TOKEN_KEY = "authToken";
 
+/**
+ * Ora ultimei activități în zona de administrare (milisecunde, doar un număr).
+ * Cu ea, deconectarea după inactivitate funcționează și dacă browserul a fost închis.
+ */
+export const ADMIN_ACTIVITY_KEY = "adminLastActivity";
+
 export function getAuthToken(): string | null {
   try {
     return localStorage.getItem(AUTH_TOKEN_KEY);
