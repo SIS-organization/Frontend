@@ -54,6 +54,10 @@ export type AdminSchedule = {
   activeIncident: ActiveIncident | null;
 };
 
+/** Cine a anulat o rezervare (`CancelledBy` din contract). */
+export type CancelledBy = "user" | "administrator" | "maintenance" | "university_activity" | "system";
+const CANCELLED_BY: readonly CancelledBy[] = ["user", "administrator", "maintenance", "university_activity", "system"];
+
 export type AdminBooking = {
   id: string;
   code: string;
@@ -70,6 +74,10 @@ export type AdminBooking = {
    * Fără el, orarul împarte rezervările pe culoare în ordinea în care vin.
    */
   lane: number | null;
+  /** La rezervările anulate: cine, de ce și când (altfel null). */
+  cancelledBy: CancelledBy | null;
+  cancelReason: string | null;
+  cancelledAt: string | null;
 };
 
 export type FacilityKind = {
@@ -211,6 +219,9 @@ function parseBooking(raw: unknown): AdminBooking | null {
     endTime: endTime!,
     status,
     lane: typeof raw.lane === "number" && Number.isInteger(raw.lane) && raw.lane >= 1 && raw.lane <= 4 ? raw.lane : null,
+    cancelledBy: oneOf(raw.cancelledBy, CANCELLED_BY),
+    cancelReason: text(raw.cancelReason),
+    cancelledAt: dateTime(raw.cancelledAt),
   };
 }
 
@@ -709,9 +720,6 @@ export async function reopenIncident(id: string, reopenFrom: string) {
 // Detaliile unei rezervări (vederea de administrator) — /admin/bookings/{id}
 // ===========================================================================
 
-/** Cine a anulat o rezervare (`CancelledBy` din contract). */
-export type CancelledBy = "user" | "administrator" | "maintenance" | "university_activity" | "system";
-const CANCELLED_BY: readonly CancelledBy[] = ["user", "administrator", "maintenance", "university_activity", "system"];
 
 /** Cota lunară a utilizatorului (`Quota` din contract). */
 export type UserQuota = {
@@ -726,11 +734,7 @@ export type UserQuota = {
 };
 
 export type BookingDetails = AdminBooking & {
-  userRole: string | null;
   usesIncludedQuota: boolean;
-  cancelledBy: CancelledBy | null;
-  cancelReason: string | null;
-  cancelledAt: string | null;
   quotaRefunded: boolean;
   createdAt: string | null;
   quota: UserQuota | null;
@@ -759,11 +763,7 @@ export async function getAdminBooking(id: string, signal?: AbortSignal): Promise
   if (!booking || !isObject(raw)) throw new Error("Răspuns invalid pentru rezervare.");
   return {
     ...booking,
-    userRole: isObject(raw.user) ? text(raw.user.role) : null,
     usesIncludedQuota: raw.usesIncludedQuota === true,
-    cancelledBy: oneOf(raw.cancelledBy, CANCELLED_BY),
-    cancelReason: text(raw.cancelReason),
-    cancelledAt: dateTime(raw.cancelledAt),
     quotaRefunded: raw.quotaRefunded === true,
     createdAt: dateTime(raw.createdAt),
     quota: parseQuota(raw.userQuota),

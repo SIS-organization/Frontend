@@ -8,7 +8,7 @@
 //
 // Fila și filtrele stau în adresă (?fila=&cauta=&facilitate=&de=&pana=&pagina=), ca pagina
 // să poată fi reîncărcată sau trimisă altcuiva; fiecare valoare e verificată înainte de folosire.
-// File: „Viitoare” (implicită) și „Istoric” (rezervările încheiate); „Anulate” vine într-un pas următor.
+// File: „Viitoare” (implicită), „Istoric” (rezervările încheiate) și „Anulate” (cine, când și de ce).
 
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -25,11 +25,11 @@ import {
   type BookingsTab,
   type FacilityKind,
 } from "../api";
-import { BOOKING_STATUS, BOOKING_STATUS_TONE, ROLE_LABEL } from "../bookingText";
+import { BOOKING_STATUS, BOOKING_STATUS_TONE, CANCELLED_BY_LABEL, ROLE_LABEL } from "../bookingText";
 import { Card, DateInput, Select, input, secondaryButton } from "../components/ActivityForm";
 import BookingDetailsDialog from "../components/BookingDetailsDialog";
 import CancelBookingDialog from "../components/CancelBookingDialog";
-import { bucharestParts, formatDayMonth, formatTimeRange, formatWeekday, isValidIsoDate } from "../time";
+import { bucharestParts, formatClock, formatDayMonth, formatTimeRange, formatWeekday, isValidIsoDate } from "../time";
 
 /** Câte rezervări pe pagină. */
 const PAGE_SIZE = 20;
@@ -40,12 +40,12 @@ const CANCELLABLE: readonly AdminBooking["status"][] = ["confirmed", "in_verific
 
 /**
  * Filele paginii. `param` = valoarea din adresă (?fila=); `empty` = textul când lista e goală.
- * „Anulate” e afișată, dar inactivă până o implementăm.
+ * `ready: false` = fila apare, dar e inactivă (toate sunt implementate acum).
  */
 const TABS: { value: BookingsTab; param: string | null; label: string; ready: boolean; empty: string }[] = [
   { value: "upcoming", param: null, label: "Viitoare", ready: true, empty: "rezervări viitoare" },
   { value: "history", param: "istoric", label: "Istoric", ready: true, empty: "rezervări încheiate" },
-  { value: "cancelled", param: "anulate", label: "Anulate", ready: false, empty: "rezervări anulate" },
+  { value: "cancelled", param: "anulate", label: "Anulate", ready: true, empty: "rezervări anulate" },
 ];
 
 /** Mesajul pentru administrator, după eroarea primită de la server. */
@@ -292,7 +292,8 @@ export default function AdminBookingsPage() {
                   <th scope="col" className="py-2 pr-3 font-semibold">Persoană</th>
                   <th scope="col" className="py-2 pr-3 font-semibold">Facilitate</th>
                   <th scope="col" className="py-2 pr-3 font-semibold">Data și ora</th>
-                  <th scope="col" className="py-2 pr-3 font-semibold">Status</th>
+                  {/* În „Anulate” statusul e mereu „Anulată”; arătăm în schimb detaliile anulării. */}
+                  <th scope="col" className="py-2 pr-3 font-semibold">{tab === "cancelled" ? "Anulare" : "Status"}</th>
                   <th scope="col" className="py-2 text-right font-semibold">
                     <span className="sr-only">Acțiuni</span>
                   </th>
@@ -311,11 +312,30 @@ export default function AdminBookingsPage() {
                       <span className="block text-heading">{dayLabel(b.startTime)}</span>
                       <span className="text-xs text-muted">{formatTimeRange(b.startTime, b.endTime)}</span>
                     </td>
-                    <td className="py-3 pr-3">
-                      <span className={`rounded-md px-2 py-1 text-xs font-semibold whitespace-nowrap ${BOOKING_STATUS_TONE[b.status]}`}>
-                        {BOOKING_STATUS[b.status]}
-                      </span>
-                    </td>
+                    {tab === "cancelled" ? (
+                      <td className="max-w-[320px] py-3 pr-3">
+                        <span className="block text-heading">
+                          Anulată {b.cancelledBy ? CANCELLED_BY_LABEL[b.cancelledBy] : ""}
+                        </span>
+                        {b.cancelledAt && (
+                          <span className="block text-xs text-muted">
+                            {formatDayMonth(bucharestParts(b.cancelledAt).date)} · {formatClock(b.cancelledAt)}
+                          </span>
+                        )}
+                        {/* Motivul poate fi lung: îl tăiem la un rând, textul complet e în title și în Detalii. */}
+                        {b.cancelReason && (
+                          <span className="block truncate text-xs text-muted" title={b.cancelReason}>
+                            Motiv: {b.cancelReason}
+                          </span>
+                        )}
+                      </td>
+                    ) : (
+                      <td className="py-3 pr-3">
+                        <span className={`rounded-md px-2 py-1 text-xs font-semibold whitespace-nowrap ${BOOKING_STATUS_TONE[b.status]}`}>
+                          {BOOKING_STATUS[b.status]}
+                        </span>
+                      </td>
+                    )}
                     <td className="py-3 text-right whitespace-nowrap">
                       <span className="inline-flex gap-2">
                         <button

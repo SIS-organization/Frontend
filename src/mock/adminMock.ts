@@ -857,9 +857,11 @@ function seedBookings(date: string) {
     [BAZIN, 18, PEOPLE[2]],
     [BAZIN, 18, PEOPLE[3]],
     [BAZIN, 18, PEOPLE[4]],
+    // Ultima rezervare a zilei e anulată de utilizator (pentru fila „Anulate”; nu apare în orar).
+    [SALA, 12, PEOPLE[5]],
   ];
   const mmdd = date.slice(5, 7) + date.slice(8, 10);
-  return slots.map(([facilityId, hour, name], index) => ({
+  const seeded = slots.map(([facilityId, hour, name], index) => ({
     id: `b-${date}-${index + 1}`,
     code: `USV-${mmdd}-${184 + index}`,
     facility: { id: facilityId, name: facilityName(facilityId), campus: "Campus USV" },
@@ -874,6 +876,14 @@ function seedBookings(date: string) {
     cancelledAt: null as string | null,
     quotaRefunded: false,
   }));
+  const cancelled = seeded[seeded.length - 1];
+  cancelled.status = "cancelled";
+  cancelled.cancelledBy = "user";
+  cancelled.cancelReason = "Nu mai pot ajunge la ora rezervată.";
+  // Anulată cu o zi înainte, dar niciodată „în viitor” față de momentul de acum.
+  cancelled.cancelledAt = new Date(Math.min(Date.parse(cancelled.startTime) - 86_400_000, Date.now() - 7_200_000)).toISOString();
+  cancelled.quotaRefunded = cancelled.usesIncludedQuota;
+  return seeded;
 }
 
 function requireAdmin(token: string | null | undefined) {
@@ -1011,8 +1021,13 @@ function listBookings(query: URLSearchParams, facilityId: string | null) {
           ? b.status === "cancelled"
           : b.status !== "cancelled" && (t === "history" ? Date.parse(b.endTime) <= now : Date.parse(b.endTime) > now),
       )
-      // Viitoare: cele mai apropiate întâi; istoric și anulate: cele mai recente întâi.
-      .sort((a, b) => (t === "upcoming" ? 1 : -1) * a.startTime.localeCompare(b.startTime) || a.id.localeCompare(b.id));
+      // Viitoare: cele mai apropiate întâi; istoric: cele mai recente întâi;
+      // anulate: cele anulate cel mai recent întâi.
+      .sort((a, b) =>
+        t === "cancelled"
+          ? (b.cancelledAt ?? b.startTime).localeCompare(a.cancelledAt ?? a.startTime) || a.id.localeCompare(b.id)
+          : (t === "upcoming" ? 1 : -1) * a.startTime.localeCompare(b.startTime) || a.id.localeCompare(b.id),
+      );
   };
 
   const items = itemsFor(tab);
