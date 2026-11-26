@@ -3,6 +3,8 @@
 //   POST /admin/bookings/{bookingId}/cancel
 //   GET  /admin/waitlist, GET /admin/bookings/export (CSV)
 //   GET  /admin/users, GET /admin/users/export (CSV)
+//   GET  /admin/users/{userId}, GET /admin/users/{userId}/bookings
+//   GET  /admin/audit-log (construit din rezervări: confirmări, anulări, cote restituite)
 //   POST /admin/activities/preview, POST /admin/activities
 //   GET / PUT / DELETE /admin/activities/{activityId}
 //   GET /admin/incidents, POST /admin/incidents/preview, POST /admin/incidents
@@ -926,8 +928,12 @@ function seedBookings(date: string) {
   cancelled.status = "cancelled";
   cancelled.cancelledBy = "user";
   cancelled.cancelReason = "Nu mai pot ajunge la ora rezervată.";
-  // Anulată cu o zi înainte, dar niciodată „în viitor” față de momentul de acum.
-  cancelled.cancelledAt = new Date(Math.min(Date.parse(cancelled.startTime) - 86_400_000, Date.now() - 7_200_000)).toISOString();
+  // Anulată cu o zi înainte, dar niciodată „în viitor” față de momentul de acum. Pentru zilele
+  // care urmează, momentul vine la 25 de minute după crearea rezervării (vezi bookingCreatedAt),
+  // diferit pentru fiecare zi, ca jurnalul să nu aibă toate anulările la aceeași oră.
+  const daysAhead = Math.max(0, Math.round((Date.parse(cancelled.startTime) - Date.now()) / 86_400_000));
+  const latest = Date.now() - (71 + daysAhead * 37) * 60_000;
+  cancelled.cancelledAt = new Date(Math.min(Date.parse(cancelled.startTime) - 86_400_000, latest)).toISOString();
   cancelled.quotaRefunded = cancelled.usesIncludedQuota;
   return seeded;
 }
@@ -936,6 +942,19 @@ function requireAdmin(token: string | null | undefined) {
   const role = mockRoleForToken(token);
   if (!role) fail(401, "UNAUTHENTICATED", "Autentifică-te cu contul USV.");
   if (role !== "administrator") fail(403, "FORBIDDEN", "Nu ai permisiunea necesară.");
+}
+
+/**
+ * Momentul în care a fost făcută rezervarea: cu 3 zile înainte, dar niciodată „în viitor”.
+ * Rezervările din zilele următoare primesc momente diferite din ultimele ore (în funcție
+ * de zi și de numărul rezervării), ca jurnalul să nu aibă zeci de intrări la aceeași oră.
+ * Folosit de detaliile rezervării și de jurnalul de acțiuni, ca să arate același moment.
+ */
+function bookingCreatedAt(b: MockBooking) {
+  const index = Number(/-(\d+)$/.exec(b.id)?.[1] ?? 0);
+  const daysAhead = Math.max(0, Math.round((Date.parse(b.startTime) - Date.now()) / 86_400_000));
+  const latest = Date.now() - 3_600_000 - daysAhead * 37 * 60_000 - index * 3 * 60_000;
+  return new Date(Math.min(Date.parse(b.startTime) - 3 * 86_400_000, latest)).toISOString();
 }
 
 /**
@@ -948,8 +967,7 @@ function bookingDetails(id: string) {
   const booking = bookings.get(id);
   if (!booking) fail(404, "NOT_FOUND", "Rezervarea nu există.");
 
-  // Rezervarea a fost făcută cu 3 zile înainte, dar niciodată „în viitor”.
-  const createdAt = new Date(Math.min(Date.parse(booking.startTime) - 3 * 86_400_000, Date.now() - 3_600_000)).toISOString();
+  const createdAt = bookingCreatedAt(booking);
 
   // Cota lunară: doar studenții au 4 rezervări incluse; profesorii nelimitat, externii fără cotă.
   const month = booking.startTime.slice(0, 7);
@@ -1338,9 +1356,186 @@ function exportUsers(query: URLSearchParams) {
     [u.name, u.email, roleRo[u.role], u.faculty ?? u.department ?? "", verificationLabel(u), userRow(u).quotaLabel].map(csvCell).join(";"),
   );
   return {
-    content: `﻿${[header.map(csvCell).join(";"), ...lines].join("\r\n")}`,
+    content: `\uFEFF${[header.map(csvCell).join(";"), ...lines].join("\r\n")}`,
     filename: `utilizatori-${today()}.csv`,
     type: "text/csv;charset=utf-8",
+  };
+}
+
+/** Campusul afișat în profil (toți utilizatorii din mock sunt la Suceava). */
+const CAMPUS = "Campus Suceava";
+
+/** Utilizatorul cu id-ul dat (404 dacă nu există). */
+function findUser(id: string) {
+  const user = USERS.find((u) => u.id === id);
+  if (!user) fail(404, "NOT_FOUND", "Utilizatorul nu există.");
+  return user;
+}
+
+/**
+ * GET /admin/users/{userId} — profilul (`User` + `quota` + `lastLoginAt` din contract).
+ * Telefonul e mascat, ca în backend. Contul neconfirmat nu s-a autentificat niciodată.
+ */
+function userProfile(id: string) {
+  const u = findUser(id);
+  // Cota se calculează din rezervările lunii curente: le generăm înainte (ca în director).
+  usersFor(new URLSearchParams());
+  const index = USERS.indexOf(u);
+  // Ultima autentificare: câteva ore / zile în urmă, diferit pentru fiecare utilizator.
+  const lastLoginAt = u.accessStatus === "unverified" ? null : new Date(Date.now() - (index * 19 + 2) * 3_600_000).toISOString();
+  return {
+    id: u.id,
+    name: u.name,
+    email: u.email,
+    role: u.role,
+    mobileNumber: `07•• ••• ${String(200 + index * 7).padStart(3, "0")}`,
+    faculty: u.faculty,
+    department: u.department,
+    campus: CAMPUS,
+    identitySource: u.identitySource,
+    // Acces prioritar: comunitatea USV (studenți și cadre didactice), nu publicul extern.
+    priority: u.role !== "external",
+    accessStatus: u.accessStatus,
+    quota: userQuota(u),
+    lastLoginAt,
+  };
+}
+
+/**
+ * GET /admin/users/{userId}/bookings — rezervările utilizatorului, paginate.
+ * Întâi cele care urmează (cea mai apropiată prima), apoi cele trecute (cea mai recentă prima).
+ * Mock-ul citește aceeași perioadă implicită ca lista de rezervări (±DEFAULT_SPAN zile).
+ */
+function userBookings(id: string, query: URLSearchParams) {
+  findUser(id);
+  const page = Number(query.get("page") ?? 1);
+  const pageSize = Number(query.get("pageSize") ?? 20);
+  if (!Number.isInteger(page) || page < 1 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+    fail(400, "VALIDATION_ERROR", "Paginare invalidă.");
+  }
+  const now = Date.now();
+  const day = today();
+  const all: MockBooking[] = [];
+  for (let d = addDays(day, -DEFAULT_SPAN); d <= addDays(day, DEFAULT_SPAN); d = addDays(d, 1)) all.push(...bookingsOn(d));
+  const mine = all.filter((b) => b.user.id === id);
+  const upcoming = mine.filter((b) => Date.parse(b.endTime) > now).sort((a, b) => a.startTime.localeCompare(b.startTime));
+  const past = mine.filter((b) => Date.parse(b.endTime) <= now).sort((a, b) => b.startTime.localeCompare(a.startTime));
+  const items = [...upcoming, ...past];
+  const start = (page - 1) * pageSize;
+  return {
+    page,
+    pageSize,
+    totalItems: items.length,
+    totalPages: Math.max(1, Math.ceil(items.length / pageSize)),
+    items: items.slice(start, start + pageSize).map((b) => ({ ...b, status: shownStatus(b, now) })),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Jurnalul de acțiuni (construit din rezervările din perioada mock-ului)
+// ---------------------------------------------------------------------------
+
+/** Contul de administrator din mock (cine apare ca autor al anulărilor administrative). */
+const ADMIN_ACTOR = { id: "admin-1", name: "Administratorul Bazei Sportive", role: "administrator" };
+
+const AUDIT_TYPES = [
+  "maintenance_closure", "booking_cancelled", "quota_refunded", "notification_sent", "notification_failed",
+  "notification_retried", "reservation_confirmed", "activity_created", "activity_updated", "activity_cancelled",
+  "facility_reopened", "user_access_changed", "user_profile_viewed",
+];
+
+/** „Sală fitness · 26 nov., 18:00–19:00” — descrierea unei rezervări în jurnal. */
+function bookingSummary(b: MockBooking) {
+  const fmt = (iso: string, options: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat("ro-RO", { timeZone: TIMEZONE, ...options }).format(new Date(iso));
+  const time = (iso: string) => fmt(iso, { hour: "2-digit", minute: "2-digit", hour12: false });
+  return `${b.facility.name} · ${fmt(b.startTime, { day: "numeric", month: "short" })}, ${time(b.startTime)}–${time(b.endTime)}`;
+}
+
+/** Intrările jurnalului pentru o rezervare: confirmarea și, dacă e cazul, anularea și cota restituită. */
+function auditForBooking(b: MockBooking) {
+  const user = { id: b.user.id, name: b.user.name, role: b.user.role };
+  const entries = [
+    {
+      id: `log-${b.id}-c`,
+      occurredAt: bookingCreatedAt(b),
+      type: "reservation_confirmed",
+      title: "Rezervare confirmată",
+      description: bookingSummary(b),
+      actor: user,
+      facilityId: b.facility.id,
+      reference: b.code,
+      result: b.usesIncludedQuota ? "Din cota lunară" : "Confirmată",
+    },
+  ];
+  if (b.status === "cancelled" && b.cancelledAt) {
+    const actor = b.cancelledBy === "user" ? user : ADMIN_ACTOR;
+    entries.push({
+      id: `log-${b.id}-x`,
+      occurredAt: b.cancelledAt,
+      type: "booking_cancelled",
+      title: "Rezervare anulată",
+      description: `${bookingSummary(b)}${b.cancelReason ? ` · Motiv: ${b.cancelReason}` : ""}`,
+      actor,
+      facilityId: b.facility.id,
+      reference: b.code,
+      result: b.cancelledBy === "user" ? "Anulată de utilizator" : "Anulată de administrator",
+    });
+    if (b.quotaRefunded) {
+      entries.push({
+        id: `log-${b.id}-q`,
+        // Cota se restituie imediat după anulare.
+        occurredAt: new Date(Date.parse(b.cancelledAt) + 1000).toISOString(),
+        type: "quota_refunded",
+        title: "Cotă restituită",
+        description: `${bookingSummary(b)} · 1 rezervare înapoi în cota lunară`,
+        actor,
+        facilityId: b.facility.id,
+        reference: b.code,
+        result: "Cotă restituită",
+      });
+    }
+  }
+  return entries;
+}
+
+/**
+ * GET /admin/audit-log — filtre: date (ziua, în ora României), type, facilityId, actorId; paginat.
+ * Cele mai noi intrări primele. Doar evenimentele care s-au întâmplat deja.
+ */
+function auditLog(query: URLSearchParams, facilityId: string | null) {
+  const page = Number(query.get("page") ?? 1);
+  const pageSize = Number(query.get("pageSize") ?? 20);
+  if (!Number.isInteger(page) || page < 1 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+    fail(400, "VALIDATION_ERROR", "Paginare invalidă.");
+  }
+  const date = query.get("date");
+  if (date && !validDate(date)) fail(400, "VALIDATION_ERROR", "Parametrul date trebuie să fie o dată YYYY-MM-DD.");
+  const type = query.get("type");
+  if (type && !AUDIT_TYPES.includes(type)) fail(400, "VALIDATION_ERROR", "Tip de eveniment necunoscut.");
+  const actorId = query.get("actorId");
+  if (actorId && !/^[A-Za-z0-9_-]{1,64}$/.test(actorId)) fail(400, "VALIDATION_ERROR", "Identificator invalid.");
+
+  const now = Date.now();
+  const day = today();
+  const dayOf = (iso: string) => new Intl.DateTimeFormat("en-CA", { timeZone: TIMEZONE }).format(new Date(iso));
+  const all: ReturnType<typeof auditForBooking> = [];
+  for (let d = addDays(day, -DEFAULT_SPAN); d <= addDays(day, DEFAULT_SPAN); d = addDays(d, 1)) {
+    for (const b of bookingsOn(d)) all.push(...auditForBooking(b));
+  }
+  const items = all
+    .filter((e) => Date.parse(e.occurredAt) <= now)
+    .filter((e) => !actorId || e.actor.id === actorId)
+    .filter((e) => !type || e.type === type)
+    .filter((e) => !facilityId || e.facilityId === facilityId)
+    .filter((e) => !date || dayOf(e.occurredAt) === date)
+    .sort((a, b) => b.occurredAt.localeCompare(a.occurredAt) || a.id.localeCompare(b.id));
+  const start = (page - 1) * pageSize;
+  return {
+    page,
+    pageSize,
+    totalItems: items.length,
+    totalPages: Math.max(1, Math.ceil(items.length / pageSize)),
+    items: items.slice(start, start + pageSize),
   };
 }
 
@@ -1372,6 +1567,14 @@ export function adminMockHandler(path: string, method: HttpMethod, token: string
   if (route === "/admin/waitlist" && method === "GET") return listWaitlist(query, facilityId);
   if (route === "/admin/users" && method === "GET") return listUsers(query);
   if (route === "/admin/users/export" && method === "GET") return exportUsers(query);
+
+  if (route === "/admin/audit-log" && method === "GET") return auditLog(query, facilityId);
+
+  // /admin/users/{userId}[/bookings]: id-ul trebuie să aibă forma permisă.
+  const userRoute = /^\/admin\/users\/([A-Za-z0-9_-]{1,64})(\/bookings)?$/.exec(route);
+  if (userRoute && userRoute[1] !== "export" && method === "GET") {
+    return userRoute[2] ? userBookings(userRoute[1], query) : userProfile(userRoute[1]);
+  }
 
   if (route === "/admin/activities/preview" && method === "POST") return previewActivity(body);
   if (route === "/admin/activities" && method === "POST") return createActivity(body);

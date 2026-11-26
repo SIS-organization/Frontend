@@ -1018,3 +1018,200 @@ export async function exportUsers() {
   return apiDownload("/admin/users/export?format=csv");
 }
 
+
+// ===========================================================================
+// Profilul unui utilizator — GET /admin/users/{userId}, GET /admin/users/{userId}/bookings
+// ===========================================================================
+
+/** De unde vine identitatea: SSO-ul USV sau un e-mail confirmat (public extern). */
+export type IdentitySource = "sso" | "external_email";
+
+/**
+ * Profilul văzut de administrator (`User` + `quota` + `lastLoginAt` din contract).
+ * Backend-ul trimite doar datele necesare gestiunii bazei sportive (telefonul e mascat)
+ * și înregistrează în jurnal fiecare deschidere a profilului.
+ */
+export type UserProfile = {
+  id: string;
+  name: string;
+  email: string;
+  role: UserRole;
+  /** Telefonul, deja mascat de server (ex. „07•• ••• 214”). */
+  mobileNumber: string | null;
+  /** Doar la studenți. */
+  faculty: string | null;
+  /** Doar la cadrele didactice. */
+  department: string | null;
+  campus: string | null;
+  identitySource: IdentitySource | null;
+  /** Acces prioritar USV (studenți și cadre didactice). */
+  priority: boolean;
+  accessStatus: AccessStatus | null;
+  quota: UserQuota | null;
+  lastLoginAt: string | null;
+};
+
+function parseUserProfile(raw: unknown): UserProfile | null {
+  if (!isObject(raw)) return null;
+  const id = identifier(raw.id);
+  const name = text(raw.name);
+  const email = text(raw.email);
+  const role = oneOf(raw.role, USER_ROLES);
+  // Câmpurile obligatorii din contract (id, name, email, role); fără ele nu afișăm profilul.
+  if (!id || !name || !email || !role) return null;
+  return {
+    id,
+    name,
+    email,
+    role,
+    mobileNumber: text(raw.mobileNumber),
+    faculty: text(raw.faculty),
+    department: text(raw.department),
+    campus: text(raw.campus),
+    identitySource: oneOf(raw.identitySource, ["sso", "external_email"] as const),
+    priority: raw.priority === true,
+    accessStatus: oneOf(raw.accessStatus, ACCESS_STATUSES),
+    quota: parseQuota(raw.quota),
+    lastLoginAt: dateTime(raw.lastLoginAt),
+  };
+}
+
+/** GET /admin/users/{userId} — profilul unui utilizator. 404 = utilizatorul nu există. */
+export async function getAdminUser(id: string, signal?: AbortSignal): Promise<UserProfile> {
+  const raw = await apiRequest<unknown>(`/admin/users/${idPath(id)}`, "GET", undefined, {}, { signal });
+  const profile = parseUserProfile(raw);
+  // Un profil cu alt id decât cel cerut nu se afișează (răspuns greșit sau modificat).
+  if (!profile || profile.id !== id) throw new Error("Răspuns invalid pentru profilul utilizatorului.");
+  return profile;
+}
+
+export type UserBookingsPage = {
+  items: AdminBooking[];
+  page: number;
+  pageSize: number;
+  totalItems: number;
+  totalPages: number;
+};
+
+/** GET /admin/users/{userId}/bookings — o pagină din rezervările unui utilizator. */
+export async function getAdminUserBookings(
+  id: string,
+  params: { page: number; pageSize: number },
+  signal?: AbortSignal,
+): Promise<UserBookingsPage> {
+  if (!Number.isInteger(params.page) || params.page < 1) throw new Error("Pagină invalidă.");
+  if (!Number.isInteger(params.pageSize) || params.pageSize < 1 || params.pageSize > 100) throw new Error("Paginare invalidă.");
+  const query = new URLSearchParams({ page: String(params.page), pageSize: String(params.pageSize) });
+  const raw = await apiRequest<unknown>(`/admin/users/${idPath(id)}/bookings?${query.toString()}`, "GET", undefined, {}, { signal });
+  if (!isObject(raw)) throw new Error("Răspuns invalid pentru rezervările utilizatorului.");
+  return {
+    items: list(raw.items)
+      .map(parseBooking)
+      .filter((b): b is AdminBooking => b !== null),
+    page: count(raw.page) || params.page,
+    pageSize: count(raw.pageSize) || params.pageSize,
+    totalItems: count(raw.totalItems),
+    totalPages: Math.max(1, count(raw.totalPages)),
+  };
+}
+
+// ===========================================================================
+// Jurnalul de acțiuni — GET /admin/audit-log (fila „Activitate” din profil)
+// ===========================================================================
+
+/** Tipurile de evenimente din jurnal (`AuditEventType` din contract). */
+export type AuditEventType =
+  | "maintenance_closure"
+  | "booking_cancelled"
+  | "quota_refunded"
+  | "notification_sent"
+  | "notification_failed"
+  | "notification_retried"
+  | "reservation_confirmed"
+  | "activity_created"
+  | "activity_updated"
+  | "activity_cancelled"
+  | "facility_reopened"
+  | "user_access_changed"
+  | "user_profile_viewed";
+const AUDIT_EVENT_TYPES: readonly AuditEventType[] = [
+  "maintenance_closure",
+  "booking_cancelled",
+  "quota_refunded",
+  "notification_sent",
+  "notification_failed",
+  "notification_retried",
+  "reservation_confirmed",
+  "activity_created",
+  "activity_updated",
+  "activity_cancelled",
+  "facility_reopened",
+  "user_access_changed",
+  "user_profile_viewed",
+];
+
+/** O intrare din jurnal (`AuditLogEntry` din contract), cu valorile verificate. */
+export type AuditEntry = {
+  id: string;
+  occurredAt: string;
+  type: AuditEventType | null;
+  title: string | null;
+  description: string | null;
+  actorName: string | null;
+  /** Codul obiectului afectat (ex. „USV-1126-184”, „INC-204”). */
+  reference: string | null;
+  result: string | null;
+};
+
+export type AuditPage = {
+  items: AuditEntry[];
+  page: number;
+  pageSize: number;
+  totalItems: number;
+  totalPages: number;
+};
+
+function parseAuditEntry(raw: unknown): AuditEntry | null {
+  if (!isObject(raw)) return null;
+  const id = identifier(raw.id);
+  const occurredAt = dateTime(raw.occurredAt);
+  if (!id || !occurredAt) return null;
+  return {
+    id,
+    occurredAt,
+    type: oneOf(raw.type, AUDIT_EVENT_TYPES),
+    title: text(raw.title),
+    description: text(raw.description),
+    actorName: isObject(raw.actor) ? text(raw.actor.name) : null,
+    reference: text(raw.reference),
+    result: text(raw.result),
+  };
+}
+
+/**
+ * GET /admin/audit-log — o pagină din jurnal. Cu `actorId` primești doar acțiunile
+ * făcute de acel cont (în profil: rezervările și anulările persoanei).
+ */
+export async function getAuditLog(
+  params: { actorId?: string | null; page: number; pageSize: number },
+  signal?: AbortSignal,
+): Promise<AuditPage> {
+  if (!Number.isInteger(params.page) || params.page < 1) throw new Error("Pagină invalidă.");
+  if (!Number.isInteger(params.pageSize) || params.pageSize < 1 || params.pageSize > 100) throw new Error("Paginare invalidă.");
+  const query = new URLSearchParams({ page: String(params.page), pageSize: String(params.pageSize) });
+  if (params.actorId) {
+    if (!identifier(params.actorId)) throw new Error("Identificator invalid.");
+    query.set("actorId", params.actorId);
+  }
+  const raw = await apiRequest<unknown>(`/admin/audit-log?${query.toString()}`, "GET", undefined, {}, { signal });
+  if (!isObject(raw)) throw new Error("Răspuns invalid pentru jurnalul de acțiuni.");
+  return {
+    items: list(raw.items)
+      .map(parseAuditEntry)
+      .filter((e): e is AuditEntry => e !== null),
+    page: count(raw.page) || params.page,
+    pageSize: count(raw.pageSize) || params.pageSize,
+    totalItems: count(raw.totalItems),
+    totalPages: Math.max(1, count(raw.totalPages)),
+  };
+}

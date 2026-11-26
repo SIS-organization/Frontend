@@ -3,7 +3,7 @@
 //
 //   - 4 carduri cu totaluri: total, studenți USV, cadre didactice, public extern;
 //   - căutare după nume sau e-mail, filtre pe categorie și stare de acces;
-//   - tabel: utilizator, categorie, verificare / acces, „Vezi profilul →”;
+//   - tabel: utilizator, categorie, verificare / acces, „Vezi profilul →” (deschide profilul);
 //   - „Categorii disponibile”: scurtături pentru filtrul de categorie;
 //   - „Exportă utilizatori” (GET /admin/users/export, CSV).
 // Datele vin din GET /admin/users. Categoria (rolul) vine din SSO și nu se schimbă de aici.
@@ -11,10 +11,9 @@
 // Filtrele stau în adresă (?cauta=&categorie=&acces=&pagina=) și sunt verificate înainte de folosire.
 
 import { useCallback, useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { ApiError } from "../../api/client";
 import { useAuth } from "../../context/useAuth";
-import { COMING_SOON } from "../adminNav";
 import {
   SEARCH_MAX,
   exportUsers,
@@ -67,6 +66,7 @@ const th = "px-3 py-2.5 text-[10px] font-semibold tracking-wide text-muted upper
 export default function AdminUsersPage() {
   const { logout } = useAuth();
   const [params, setParams] = useSearchParams();
+  const location = useLocation();
 
   // Filtrele din adresă, verificate (o valoare necunoscută e ignorată, nu trimisă la server).
   const q = (params.get("cauta") ?? "").slice(0, SEARCH_MAX);
@@ -281,15 +281,15 @@ export default function AdminUsersPage() {
                     <td className="px-3 py-3 text-heading">{u.role ? ROLE_LABEL[u.role] : "—"}</td>
                     <td className="px-3 py-3 text-heading">{u.verification ?? "—"}</td>
                     <td className="px-3 py-3">
-                      {/* Profilul utilizatorului este ecranul următor; până atunci legătura e inactivă. */}
-                      <button
-                        type="button"
-                        disabled
-                        title={COMING_SOON}
-                        className="text-xs font-semibold whitespace-nowrap text-primary disabled:cursor-not-allowed disabled:opacity-50"
+                      {/* Filtrele curente merg cu profilul, ca „Înapoi la utilizatori” să redeschidă aceeași listă.
+                          Id-ul a fost verificat la sosire (api.ts) și e codificat în adresă. */}
+                      <Link
+                        to={`/admin/utilizatori/${encodeURIComponent(u.id)}`}
+                        state={{ directory: location.search }}
+                        className="text-xs font-semibold whitespace-nowrap text-primary hover:underline"
                       >
                         Vezi profilul →
-                      </button>
+                      </Link>
                     </td>
                   </tr>
                 ))}
