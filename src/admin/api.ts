@@ -921,3 +921,100 @@ export async function getAllWaitlist(params: Omit<WaitlistQuery, "page" | "pageS
   return all;
 }
 
+// ===========================================================================
+// Utilizatori (directorul de administrare) — GET /admin/users
+// ===========================================================================
+
+/** Categoria (rolul) unui utilizator; vine din SSO și nu se atribuie manual. */
+export type UserRole = "student" | "professor" | "external" | "administrator";
+export const USER_ROLES: readonly UserRole[] = ["student", "professor", "external", "administrator"];
+
+/** Starea accesului unui cont. */
+export type AccessStatus = "active" | "suspended" | "unverified";
+export const ACCESS_STATUSES: readonly AccessStatus[] = ["active", "suspended", "unverified"];
+
+/** Un rând din director (`AdminUserRow` din contract), cu valorile verificate. */
+export type UserRow = {
+  id: string;
+  name: string;
+  email: string | null;
+  role: UserRole | null;
+  /** Textul „Verificare / acces” trimis de server (ex. „SSO USV · activ”). */
+  verification: string | null;
+  quotaLabel: string | null;
+};
+
+/** Totalurile pentru cele 4 carduri de sus (toată comunitatea, nu doar filtrele alese). */
+export type UserTotals = { total: number | null; students: number | null; professors: number | null; external: number | null };
+
+export type UsersPage = {
+  items: UserRow[];
+  totals: UserTotals;
+  page: number;
+  pageSize: number;
+  totalItems: number;
+  totalPages: number;
+};
+
+function parseUserRow(raw: unknown): UserRow | null {
+  if (!isObject(raw)) return null;
+  const id = identifier(raw.id);
+  const name = text(raw.name);
+  if (!id || !name) return null;
+  return {
+    id,
+    name,
+    email: text(raw.email),
+    role: oneOf(raw.role, USER_ROLES),
+    verification: text(raw.verification),
+    quotaLabel: text(raw.quotaLabel),
+  };
+}
+
+/**
+ * GET /admin/users — o pagină din director, cu căutare (nume sau e-mail), filtre pe
+ * categorie și stare de acces. Parametrii sunt verificați înainte de a ajunge în adresă.
+ */
+export async function getAdminUsers(
+  params: { q?: string; role?: UserRole | null; accessStatus?: AccessStatus | null; page: number; pageSize: number },
+  signal?: AbortSignal,
+): Promise<UsersPage> {
+  if (!Number.isInteger(params.page) || params.page < 1) throw new Error("Pagină invalidă.");
+  const query = new URLSearchParams({ page: String(params.page), pageSize: String(params.pageSize) });
+  const q = params.q?.trim() ?? "";
+  if (q) query.set("q", q.slice(0, SEARCH_MAX));
+  if (params.role) {
+    if (!USER_ROLES.includes(params.role)) throw new Error("Categorie invalidă.");
+    query.set("role", params.role);
+  }
+  if (params.accessStatus) {
+    if (!ACCESS_STATUSES.includes(params.accessStatus)) throw new Error("Stare de acces invalidă.");
+    query.set("accessStatus", params.accessStatus);
+  }
+
+  const raw = await apiRequest<unknown>(`/admin/users?${query.toString()}`, "GET", undefined, {}, { signal });
+  if (!isObject(raw)) throw new Error("Răspuns invalid pentru utilizatori.");
+  const totals = isObject(raw.totals) ? raw.totals : {};
+  const optional = (value: unknown) => (typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null);
+  return {
+    items: list(raw.items)
+      .map(parseUserRow)
+      .filter((u): u is UserRow => u !== null),
+    totals: {
+      total: optional(totals.total),
+      students: optional(totals.students),
+      professors: optional(totals.professors),
+      external: optional(totals.external),
+    },
+    page: count(raw.page) || params.page,
+    pageSize: count(raw.pageSize) || params.pageSize,
+    totalItems: count(raw.totalItems),
+    totalPages: Math.max(1, count(raw.totalPages)),
+  };
+}
+
+/** GET /admin/users/export — toți utilizatorii, fișier CSV (contractul nu are filtre la export). */
+export async function exportUsers() {
+  return apiDownload("/admin/users/export?format=csv");
+}
+

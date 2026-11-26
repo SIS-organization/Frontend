@@ -38,6 +38,7 @@ import { BOOKING_STATUS, BOOKING_STATUS_TONE, CANCELLED_BY_LABEL, ROLE_LABEL, WA
 import { Card, DateInput, Select, input, secondaryButton } from "../components/ActivityForm";
 import BookingDetailsDialog from "../components/BookingDetailsDialog";
 import CancelBookingDialog from "../components/CancelBookingDialog";
+import Pagination from "../components/Pagination";
 import WaitlistDetailsDialog from "../components/WaitlistDetailsDialog";
 import { buildCsv, saveFile } from "../download";
 import { bucharestParts, formatClock, formatDayMonth, formatTimeRange, formatWeekday, isValidIsoDate, todayInBucharest } from "../time";
@@ -46,8 +47,6 @@ import { bucharestParts, formatClock, formatDayMonth, formatTimeRange, formatWee
 const PAGE_SIZE = 20;
 /** Cât așteptăm după ultima tastă înainte de căutare (ms). */
 const SEARCH_DELAY = 350;
-/** Câte numere de pagină arătăm în paginare (în jurul paginii curente). */
-const PAGE_WINDOW = 5;
 /** Statusurile în care o rezervare mai poate fi anulată de administrator. */
 const CANCELLABLE: readonly AdminBooking["status"][] = ["confirmed", "in_verification", "awaiting_transfer"];
 
@@ -98,11 +97,6 @@ function shortSlot(startIso: string, endIso: string) {
   return `${short} · ${formatTimeRange(startIso, endIso)}`;
 }
 
-/** Numerele de pagină afișate (cel mult PAGE_WINDOW, în jurul paginii curente). */
-function pageNumbers(page: number, totalPages: number) {
-  const start = Math.max(1, Math.min(page - Math.floor(PAGE_WINDOW / 2), totalPages - PAGE_WINDOW + 1));
-  return Array.from({ length: Math.min(PAGE_WINDOW, totalPages) }, (_, i) => start + i);
-}
 
 const th = "px-3 py-2.5 text-[10px] font-semibold tracking-wide text-muted uppercase";
 
@@ -518,45 +512,16 @@ export default function AdminBookingsPage() {
         </div>
       </Card>
 
-      {/* Paginarea (ca în Figma): „3 din 3 înregistrări · Campus USV”, „← Înapoi”, pagini, „Înainte →”. */}
-      {view && view.totalItems > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted">
-          <p>
-            {rowCount} din {view.totalItems} {view.totalItems === 1 ? "înregistrare" : "înregistrări"} · Campus USV
-          </p>
-          <nav aria-label="Paginare" className="flex items-center gap-2">
-            <button
-              type="button"
-              className={secondaryButton}
-              disabled={view.page <= 1 || loading}
-              onClick={() => setFilters({ pagina: view.page - 1 > 1 ? String(view.page - 1) : null }, true)}
-            >
-              ← Înapoi
-            </button>
-            {pageNumbers(view.page, view.totalPages).map((n) => (
-              <button
-                key={n}
-                type="button"
-                aria-current={n === view.page ? "page" : undefined}
-                disabled={loading}
-                onClick={() => setFilters({ pagina: n > 1 ? String(n) : null }, true)}
-                className={`flex size-10 items-center justify-center rounded-lg text-[13px] font-semibold ${
-                  n === view.page ? "bg-primary text-white" : "border border-[#dde5e2] bg-white text-heading hover:bg-bg"
-                }`}
-              >
-                {n}
-              </button>
-            ))}
-            <button
-              type="button"
-              className={secondaryButton}
-              disabled={view.page >= view.totalPages || loading}
-              onClick={() => setFilters({ pagina: String(view.page + 1) }, true)}
-            >
-              Înainte →
-            </button>
-          </nav>
-        </div>
+      {/* Paginarea (ca în Figma). */}
+      {view && (
+        <Pagination
+          page={view.page}
+          totalPages={view.totalPages}
+          totalItems={view.totalItems}
+          shown={rowCount}
+          loading={loading}
+          onPage={(n) => setFilters({ pagina: n > 1 ? String(n) : null }, true)}
+        />
       )}
 
       {/* Ferestrele (detalii și anulare refolosite din orar; solicitarea de pe lista de așteptare). */}

@@ -2,6 +2,7 @@
 //   GET  /admin/schedule, GET /admin/bookings, GET /admin/bookings/{bookingId}
 //   POST /admin/bookings/{bookingId}/cancel
 //   GET  /admin/waitlist, GET /admin/bookings/export (CSV)
+//   GET  /admin/users, GET /admin/users/export (CSV)
 //   POST /admin/activities/preview, POST /admin/activities
 //   GET / PUT / DELETE /admin/activities/{activityId}
 //   GET /admin/incidents, POST /admin/incidents/preview, POST /admin/incidents
@@ -1214,6 +1215,135 @@ function exportBookings(query: URLSearchParams, facilityId: string | null) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Utilizatori (directorul de administrare)
+// ---------------------------------------------------------------------------
+
+type MockUser = {
+  id: string;
+  name: string;
+  email: string;
+  role: "student" | "professor" | "external";
+  faculty: string | null;
+  department: string | null;
+  identitySource: "sso" | "external_email";
+  accessStatus: "active" | "suspended" | "unverified";
+};
+
+/**
+ * Utilizatorii din mock: aceiași oameni ca în rezervări și lista de așteptare (aceleași id-uri),
+ * plus un cont suspendat și unul extern neverificat, ca filtrele de acces să aibă ce arăta.
+ * Administratorii nu apar în director (contractul numără doar studenți, cadre didactice, externi).
+ */
+const USERS: MockUser[] = [
+  { id: "u-1", name: "Andrei Munteanu", email: "a.munteanu@student.usv.ro", role: "student", faculty: "Facultatea de Inginerie Electrică", department: null, identitySource: "sso", accessStatus: "active" },
+  { id: "u-2", name: "Daria Stan", email: "d.stan@student.usv.ro", role: "student", faculty: "Facultatea de Educație Fizică și Sport", department: null, identitySource: "sso", accessStatus: "active" },
+  { id: "u-3", name: "Radu Ionescu", email: "r.ionescu@student.usv.ro", role: "student", faculty: "Facultatea de Inginerie Electrică", department: null, identitySource: "sso", accessStatus: "active" },
+  { id: "u-4", name: "Elena Rusu", email: "elena.rusu@usm.ro", role: "professor", faculty: null, department: "Departamentul de Educație Fizică", identitySource: "sso", accessStatus: "active" },
+  { id: "u-5", name: "Vlad Ciobanu", email: "vlad.ciobanu@gmail.com", role: "external", faculty: null, department: null, identitySource: "external_email", accessStatus: "active" },
+  { id: "u-6", name: "Ioana Popescu", email: "i.popescu@student.usv.ro", role: "student", faculty: "Facultatea de Litere și Științe ale Comunicării", department: null, identitySource: "sso", accessStatus: "active" },
+  { id: "u-7", name: "Maria Enache", email: "m.enache@student.usv.ro", role: "student", faculty: "Facultatea de Economie, Administrație și Afaceri", department: null, identitySource: "sso", accessStatus: "active" },
+  { id: "u-8", name: "Ioana Pavel", email: "i.pavel@student.usv.ro", role: "student", faculty: "Facultatea de Inginerie Alimentară", department: null, identitySource: "sso", accessStatus: "active" },
+  { id: "u-9", name: "Alexandru Luca", email: "a.luca@student.usv.ro", role: "student", faculty: "Facultatea de Inginerie Electrică", department: null, identitySource: "sso", accessStatus: "suspended" },
+  { id: "u-10", name: "Cristina Pop", email: "cristina.pop@yahoo.com", role: "external", faculty: null, department: null, identitySource: "external_email", accessStatus: "unverified" },
+];
+
+/** Textul din coloana „Verificare / acces”. */
+function verificationLabel(u: MockUser) {
+  const source = u.identitySource === "sso" ? "SSO USV" : "E-mail";
+  const access = { active: u.identitySource === "sso" ? "activ" : "verificat", suspended: "suspendat", unverified: "neconfirmat" }[u.accessStatus];
+  return `${source} · ${access}`;
+}
+
+/** Cota lunară (luna curentă) a unui utilizator, în forma `Quota` din contract. */
+function userQuota(u: MockUser) {
+  const month = today().slice(0, 7);
+  const [y, m] = month.split("-").map(Number);
+  const resetsOn = `${m === 12 ? y + 1 : y}-${String(m === 12 ? 1 : m + 1).padStart(2, "0")}-01`;
+  const counted = [...bookings.values()].filter(
+    (b) => b.user.id === u.id && b.startTime.startsWith(month) && b.status !== "cancelled" && b.status !== "rejected",
+  ).length;
+  if (u.role !== "student") {
+    return { month, included: null, used: counted, remaining: null, resetsOn, priority: u.role === "professor", limitReached: false, appliesTo: u.role === "professor" ? "professor_unlimited" : "external_none" };
+  }
+  const used = Math.min(counted, 4);
+  return { month, included: 4, used, remaining: 4 - used, resetsOn, priority: true, limitReached: used >= 4, appliesTo: "student" };
+}
+
+/** Rândul din director (`AdminUserRow` din contract). */
+function userRow(u: MockUser) {
+  const quota = userQuota(u);
+  return {
+    id: u.id,
+    name: u.name,
+    email: u.email,
+    role: u.role,
+    verification: verificationLabel(u),
+    quotaLabel: quota.included === null ? (u.role === "professor" ? "Fără limită" : "Fără cotă inclusă") : `${quota.used} / ${quota.included} utilizate`,
+    quota,
+  };
+}
+
+/** Utilizatorii care corespund filtrelor (q = nume sau e-mail, rol, stare acces), după nume. */
+function usersFor(query: URLSearchParams) {
+  const role = query.get("role");
+  if (role && !["student", "professor", "external", "administrator"].includes(role)) fail(400, "VALIDATION_ERROR", "Categorie necunoscută.");
+  const access = query.get("accessStatus");
+  if (access && !["active", "suspended", "unverified"].includes(access)) fail(400, "VALIDATION_ERROR", "Stare de acces necunoscută.");
+  const q = (query.get("q") ?? "").trim();
+  if (q.length > 100) fail(400, "VALIDATION_ERROR", "Textul căutat este prea lung.");
+  const needle = normalize(q);
+  // Cota se calculează din rezervările lunii curente: le generăm înainte.
+  const month = today().slice(0, 8);
+  for (let d = `${month}01`; d.startsWith(month.slice(0, 7)); d = addDays(d, 1)) ensureDay(d);
+  return USERS.filter((u) => !role || u.role === role)
+    .filter((u) => !access || u.accessStatus === access)
+    .filter((u) => !needle || normalize(u.name).includes(needle) || normalize(u.email).includes(needle))
+    .sort((a, b) => a.name.localeCompare(b.name, "ro"));
+}
+
+/** GET /admin/users — directorul, paginat, cu totalurile pe categorii (pentru cardurile de sus). */
+function listUsers(query: URLSearchParams) {
+  const page = Number(query.get("page") ?? 1);
+  const pageSize = Number(query.get("pageSize") ?? 20);
+  if (!Number.isInteger(page) || page < 1 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+    fail(400, "VALIDATION_ERROR", "Paginare invalidă.");
+  }
+  const items = usersFor(query);
+  const start = (page - 1) * pageSize;
+  return {
+    page,
+    pageSize,
+    totalItems: items.length,
+    totalPages: Math.max(1, Math.ceil(items.length / pageSize)),
+    // Totalurile sunt pentru toată comunitatea, nu doar pentru filtrele alese.
+    totals: {
+      total: USERS.length,
+      students: USERS.filter((u) => u.role === "student").length,
+      professors: USERS.filter((u) => u.role === "professor").length,
+      external: USERS.filter((u) => u.role === "external").length,
+    },
+    items: items.slice(start, start + pageSize).map(userRow),
+  };
+}
+
+/** GET /admin/users/export — toți utilizatorii, CSV (contractul nu are filtre la export). */
+function exportUsers(query: URLSearchParams) {
+  const format = query.get("format") ?? "csv";
+  if (format !== "csv" && format !== "xlsx") fail(400, "VALIDATION_ERROR", "Format necunoscut.");
+  if (format === "xlsx") fail(400, "VALIDATION_ERROR", "Mock-ul generează doar fișiere CSV.");
+  const header = ["Nume", "E-mail", "Categorie", "Facultate / departament", "Verificare / acces", "Cotă lunară"];
+  const roleRo: Record<string, string> = { student: "Student", professor: "Cadru didactic", external: "Public extern" };
+  const lines = usersFor(new URLSearchParams()).map((u) =>
+    [u.name, u.email, roleRo[u.role], u.faculty ?? u.department ?? "", verificationLabel(u), userRow(u).quotaLabel].map(csvCell).join(";"),
+  );
+  return {
+    content: `﻿${[header.map(csvCell).join(";"), ...lines].join("\r\n")}`,
+    filename: `utilizatori-${today()}.csv`,
+    type: "text/csv;charset=utf-8",
+  };
+}
+
 export function adminMockHandler(path: string, method: HttpMethod, token: string | null | undefined, body?: unknown) {
   requireAdmin(token);
 
@@ -1240,6 +1370,8 @@ export function adminMockHandler(path: string, method: HttpMethod, token: string
   if (route === "/admin/bookings" && method === "GET") return listBookings(query, facilityId);
   if (route === "/admin/bookings/export" && method === "GET") return exportBookings(query, facilityId);
   if (route === "/admin/waitlist" && method === "GET") return listWaitlist(query, facilityId);
+  if (route === "/admin/users" && method === "GET") return listUsers(query);
+  if (route === "/admin/users/export" && method === "GET") return exportUsers(query);
 
   if (route === "/admin/activities/preview" && method === "POST") return previewActivity(body);
   if (route === "/admin/activities" && method === "POST") return createActivity(body);

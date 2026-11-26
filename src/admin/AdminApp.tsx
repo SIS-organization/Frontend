@@ -6,6 +6,7 @@ import AdminBlockFacilityPage from "./pages/AdminBlockFacilityPage";
 import AdminBookingsPage from "./pages/AdminBookingsPage";
 import AdminIncidentPage from "./pages/AdminIncidentPage";
 import AdminSchedulePage from "./pages/AdminSchedulePage";
+import AdminUsersPage from "./pages/AdminUsersPage";
 
 // Rutele zonei /admin/*.
 //
@@ -21,6 +22,8 @@ import AdminSchedulePage from "./pages/AdminSchedulePage";
 //   /admin/orar/incidente/:id      → „Deblocare anticipată” (detalii, istoric, redeschidere)
 // Secțiunea „Rezervări”:
 //   /admin/rezervari               → lista rezervărilor (file, căutare, filtre)
+// Secțiunea „Utilizatori”:
+//   /admin/utilizatori             → directorul comunității (totaluri, căutare, filtre)
 // Orice altă adresă /admin/... duce înapoi la orar.
 export default function AdminApp() {
   return (
@@ -32,6 +35,7 @@ export default function AdminApp() {
         <Route path="orar/blocare" element={<AdminBlockFacilityPage />} />
         <Route path="orar/incidente/:incidentId" element={<AdminIncidentPage />} />
         <Route path="rezervari" element={<AdminBookingsPage />} />
+        <Route path="utilizatori" element={<AdminUsersPage />} />
         <Route path="*" element={<Navigate to="/admin/orar" replace />} />
       </Route>
     </Routes>
