@@ -228,7 +228,12 @@ function textField(body: Json, key: string, min: number, max: number, label: str
   return value.trim();
 }
 
-function parseActivityBody(raw: unknown) {
+/**
+ * Verifică un corp ActivityCreate. `existing` = activitatea editată (PUT): dacă
+ * a început deja, ziua, ora de început și facilitatea ei pot rămâne în trecut,
+ * dar nu pot fi schimbate.
+ */
+function parseActivityBody(raw: unknown, existing?: MockActivity) {
   if (!isObject(raw)) fail(400, "VALIDATION_ERROR", "Corpul cererii lipsește.");
   const name = textField(raw, "name", 3, 150, "Denumirea");
   const organizer = textField(raw, "organizer", 1, 150, "Organizatorul");
@@ -243,8 +248,19 @@ function parseActivityBody(raw: unknown) {
   if (!start || !end || start.date !== end.date || end.hour <= start.hour || start.hour < 8 || end.hour > 21) {
     fail(422, "INVALID_TIME_RANGE", "Intervalul trebuie să fie în aceeași zi, la ore fixe, între 08:00 și 21:00.");
   }
-  if (Date.parse(String(raw.startTime)) <= Date.now()) {
+  const alreadyStarted = existing !== undefined && Date.parse(at(existing.date, existing.from)) <= Date.now();
+  if (alreadyStarted) {
+    // Activitate în desfășurare: se pot schimba detaliile și ora de sfârșit, nu și începutul.
+    const sameStart = start.date === existing.date && start.hour === existing.from && facilityId === existing.facilityId;
+    const sameRecurrence = JSON.stringify(isObject(raw.recurrence) ? { frequency: raw.recurrence.frequency ?? "none", until: raw.recurrence.until ?? null } : { frequency: "none", until: null }) === JSON.stringify(existing.recurrence);
+    if (!sameStart || !sameRecurrence) {
+      fail(422, "ACTIVITY_ALREADY_STARTED", "Activitatea a început deja: facilitatea, ziua, ora de început și repetarea nu se mai pot schimba.");
+    }
+  } else if (Date.parse(String(raw.startTime)) <= Date.now()) {
     fail(422, "INVALID_TIME_RANGE", "Intervalul a început deja. Alege o oră viitoare.");
+  }
+  if (Date.parse(String(raw.endTime)) <= Date.now()) {
+    fail(422, "INVALID_TIME_RANGE", "Ora de sfârșit a trecut deja.");
   }
   const rec = isObject(raw.recurrence) ? raw.recurrence : {};
   const frequency = rec.frequency === "weekly" ? "weekly" : "none";
@@ -364,7 +380,7 @@ function findActivity(id: string): MockActivity {
 function updateActivity(id: string, raw: unknown) {
   const activity = findActivity(id);
   if (activity.status === "cancelled") fail(409, "ACTIVITY_CANCELLED", "Activitatea a fost anulată și nu mai poate fi editată.");
-  const input = parseActivityBody(raw);
+  const input = parseActivityBody(raw, activity);
   const { affected, overlapping, maintenance } = conflictsFor(input, id);
   if (overlapping.length > 0 || maintenance) {
     fail(409, "ACTIVITY_OVERLAPS_ACTIVITY", "Noul interval se suprapune cu o altă activitate sau cu o blocare de mentenanță.");

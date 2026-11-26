@@ -62,8 +62,14 @@ export function initialForm(dayParam: string | null, facilityParam: string | nul
 /**
  * Verifică formularul. Întoarce fie corpul cererii (ActivityCreate), fie
  * mesajele de eroare pe câmpuri. Aceleași reguli le aplică și serverul.
+ * `started` = activitate deja începută (ecranul de gestionare): ziua și ora ei
+ * de început sunt în trecut, dar rămân valide cât timp nu sunt schimbate.
  */
-export function validate(form: ActivityForm, facilities: FacilityKind[]): { body: ActivityInput | null; errors: Partial<Record<keyof ActivityForm, string>> } {
+export function validate(
+  form: ActivityForm,
+  facilities: FacilityKind[],
+  started?: { date: string; startHour: number },
+): { body: ActivityInput | null; errors: Partial<Record<keyof ActivityForm, string>> } {
   const errors: Partial<Record<keyof ActivityForm, string>> = {};
   const name = form.name.trim();
   const organizer = form.organizer.trim();
@@ -72,9 +78,13 @@ export function validate(form: ActivityForm, facilities: FacilityKind[]): { body
   if (name.length < NAME_MIN) errors.name = `Denumirea are cel puțin ${NAME_MIN} caractere.`;
   if (!organizer) errors.organizer = "Completează organizatorul sau responsabilul.";
   if (!facilities.some((f) => f.id === form.facilityId)) errors.facilityId = "Alege facilitatea.";
-  if (!isValidIsoDate(form.date) || form.date < today) errors.date = "Alege o zi de azi înainte.";
-  else if (form.date === today && form.startHour <= currentHour()) errors.startHour = "Ora de început a trecut deja.";
+  const keepsStart = started !== undefined && form.date === started.date && form.startHour === started.startHour;
+  if (!keepsStart) {
+    if (!isValidIsoDate(form.date) || form.date < today) errors.date = "Alege o zi de azi înainte.";
+    else if (form.date === today && form.startHour <= currentHour()) errors.startHour = "Ora de început a trecut deja.";
+  }
   if (form.endHour <= form.startHour) errors.endHour = "Sfârșitul trebuie să fie după început.";
+  else if (form.date === today && form.endHour <= currentHour()) errors.endHour = "Ora de sfârșit a trecut deja.";
   if (form.frequency === "weekly") {
     if (!isValidIsoDate(form.until) || form.until <= form.date) errors.until = "Alege data ultimei apariții, după prima zi.";
     else if (form.until > shiftDate(form.date, 7 * MAX_WEEKS)) errors.until = `Repetarea durează cel mult ${MAX_WEEKS} de săptămâni.`;

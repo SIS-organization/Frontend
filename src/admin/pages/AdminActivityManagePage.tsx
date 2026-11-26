@@ -14,7 +14,6 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { ApiError } from "../../api/client";
 import { useAuth } from "../../context/useAuth";
-import { ChevronDownIcon } from "../AdminIcons";
 import { ID_PATTERN, formFromActivity, validate, type ActivityForm } from "../activityForm";
 import {
   ACTIVITY_TYPE_LABEL,
@@ -62,7 +61,6 @@ export default function AdminActivityManagePage() {
   const [loadError, setLoadError] = useState<string | null>(validId ? null : "Adresa activității nu este validă.");
   const [form, setForm] = useState<ActivityForm | null>(null);
   const [mode, setMode] = useState<Mode>("view");
-  const [menuOpen, setMenuOpen] = useState(false);
   const [showErrors, setShowErrors] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -91,11 +89,17 @@ export default function AdminActivityManagePage() {
     return () => controller.abort();
   }, [activityId, validId, logout]);
 
-  const validation = useMemo(() => (form ? validate(form, facilities) : null), [form, facilities]);
+  // O activitate deja începută își păstrează ziua și ora de început (sunt în trecut).
+  const started = useMemo(() => {
+    if (!activity || Date.parse(activity.startTime) > openedAt) return undefined;
+    const saved = formFromActivity(activity);
+    return { date: saved.date, startHour: saved.startHour };
+  }, [activity, openedAt]);
+  const validation = useMemo(() => (form ? validate(form, facilities, started) : null), [form, facilities, started]);
   // Butonul de salvare e activ doar dacă s-a schimbat ceva față de activitatea salvată.
   const original = useMemo(
-    () => (activity ? JSON.stringify(validate(formFromActivity(activity), facilities).body) : ""),
-    [activity, facilities],
+    () => (activity ? JSON.stringify(validate(formFromActivity(activity), facilities, started).body) : ""),
+    [activity, facilities, started],
   );
   const changed = Boolean(validation?.body) && JSON.stringify(validation?.body) !== original;
 
@@ -121,9 +125,8 @@ export default function AdminActivityManagePage() {
     else setError(describeError(err));
   };
 
-  /** Schimbă ce arată pagina (din meniul din dreapta sau din meniul de sus). */
+  /** Schimbă ce arată pagina (din cardul „Meniu activitate”). */
   const choose = (next: Mode) => {
-    setMenuOpen(false);
     setError(null);
     setNotice(null);
     setReview(null);
@@ -244,47 +247,11 @@ export default function AdminActivityManagePage() {
     <>
       {header}
 
-      {/* Fila activă și meniul activității (aceleași acțiuni ca în cardul din dreapta). */}
-      <div className="flex flex-wrap gap-3 text-xs font-semibold">
+      {/* Fila activă; acțiunile (detalii, editare, anulare) sunt în cardul „Meniu activitate”. */}
+      <div className="flex text-xs font-semibold">
         <span className="rounded-lg border border-primary bg-primary px-3 py-2.5 text-white sm:w-[190px]">
           Detalii și editare
         </span>
-        <div
-          className="relative"
-          onBlur={(event) => {
-            if (!event.currentTarget.contains(event.relatedTarget)) setMenuOpen(false);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") setMenuOpen(false);
-          }}
-        >
-          <button
-            type="button"
-            aria-haspopup="menu"
-            aria-expanded={menuOpen}
-            onClick={() => setMenuOpen((open) => !open)}
-            className="flex items-center gap-1.5 rounded-lg border border-[#dde5e2] bg-white px-3 py-2.5 text-heading sm:w-[230px]"
-          >
-            Meniu activitate
-            <ChevronDownIcon className="size-3.5" />
-          </button>
-          {menuOpen && (
-            <div role="menu" className="absolute top-full left-0 z-10 mt-1 flex w-full min-w-[200px] flex-col rounded-lg border border-[#dde5e2] bg-white p-1 shadow-sm">
-              {menuItems.map((item) => (
-                <button
-                  key={item.mode}
-                  type="button"
-                  role="menuitem"
-                  disabled={item.disabled}
-                  onClick={() => choose(item.mode)}
-                  className={`rounded-md px-3 py-2 text-left text-[13px] font-normal hover:bg-bg disabled:cursor-not-allowed disabled:opacity-50 ${item.mode === "cancel" ? "text-[#ac443c]" : "text-heading"}`}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
       </div>
 
       {notice && (
@@ -315,13 +282,22 @@ export default function AdminActivityManagePage() {
               if (mode === "edit") void save(false);
             }}
           >
+            {/* În modul de editare erorile apar imediat, ca să fie clar de ce nu se poate salva. */}
             <ActivityFields
               form={form}
               facilities={facilities}
-              errors={showErrors && validation ? validation.errors : {}}
+              errors={(showErrors || mode === "edit") && validation ? validation.errors : {}}
               disabled={mode !== "edit" || busy}
+              lockSchedule={Boolean(started)}
               onChange={update}
             />
+
+            {mode === "edit" && started && (
+              <p className="rounded-lg bg-bg px-3 py-2 text-xs text-muted">
+                Activitatea a început deja: poți modifica detaliile și ora de sfârșit, dar nu facilitatea, ziua, ora de
+                început sau repetarea. Pentru alt interval, anulează activitatea și adaug-o din nou.
+              </p>
+            )}
 
             {review && (
               <div className="flex flex-col gap-3 rounded-xl bg-[#fdf3e3] p-4 text-[13px] text-[#926018]">

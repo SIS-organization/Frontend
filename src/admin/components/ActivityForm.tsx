@@ -106,15 +106,19 @@ export function AffectedList({ preview, limit }: { preview: Pick<ActivityPreview
  * Câmpurile formularului, așezate ca în Figma. Nu știe nimic despre server:
  * primește valorile, erorile de afișat și funcția de modificare.
  * `disabled` = doar vizualizare (ecranul de gestionare, înainte de „Editează”).
+ * `lockSchedule` = activitate deja începută: facilitatea, ziua, ora de început și
+ * repetarea nu se mai pot schimba; restul câmpurilor (și ora de sfârșit) da.
  */
 export function ActivityFields(props: {
   form: ActivityForm;
   facilities: FacilityKind[];
   errors: Partial<Record<keyof ActivityForm, string>>;
   disabled?: boolean;
+  lockSchedule?: boolean;
   onChange: <K extends keyof ActivityForm>(key: K, value: ActivityForm[K]) => void;
 }) {
-  const { form, facilities, errors, disabled, onChange } = props;
+  const { form, facilities, errors, disabled, lockSchedule, onChange } = props;
+  const scheduleDisabled = disabled || lockSchedule;
   const shown = (key: keyof ActivityForm) => errors[key];
   return (
     <>
@@ -140,7 +144,7 @@ export function ActivityFields(props: {
           </Select>
         </Field>
         <Field title="Facilitate" htmlFor="act-facility" error={shown("facilityId")}>
-          <Select disabled={disabled} id="act-facility" value={form.facilityId} onChange={(e) => onChange("facilityId", e.target.value)}>
+          <Select disabled={scheduleDisabled} id="act-facility" value={form.facilityId} onChange={(e) => onChange("facilityId", e.target.value)}>
             {facilities.length === 0 && <option value="">Se încarcă…</option>}
             {facilities.map((f) => (
               <option key={f.id} value={f.id}>
@@ -163,11 +167,11 @@ export function ActivityFields(props: {
       </Field>
       <div className="flex flex-col gap-4 sm:flex-row">
         <Field title="Data" htmlFor="act-date" error={shown("date")}>
-          <DateInput disabled={disabled} id="act-date" value={form.date} min={todayInBucharest()} onChange={(v) => onChange("date", v)} />
+          <DateInput disabled={scheduleDisabled} id="act-date" value={form.date} min={todayInBucharest()} onChange={(v) => onChange("date", v)} />
         </Field>
         <Field title="Interval" htmlFor="act-start" error={shown("startHour") ?? shown("endHour")}>
           <div className="flex items-center gap-2">
-            <Select disabled={disabled} id="act-start" aria-label="Ora de început" value={form.startHour} onChange={(e) => onChange("startHour", Number(e.target.value))}>
+            <Select disabled={scheduleDisabled} id="act-start" aria-label="Ora de început" value={form.startHour} onChange={(e) => onChange("startHour", Number(e.target.value))}>
               {START_HOURS.map((h) => (
                 <option key={h} value={h}>
                   {hourLabel(h)}
@@ -188,6 +192,7 @@ export function ActivityFields(props: {
       <div className="flex flex-col gap-4 sm:flex-row">
         <Field title="Repetare" htmlFor="act-repeat">
           <Select
+            disabled={scheduleDisabled}
             id="act-repeat"
             value={form.frequency}
             onChange={(e) => onChange("frequency", e.target.value === "weekly" ? "weekly" : "none")}
@@ -198,7 +203,7 @@ export function ActivityFields(props: {
         </Field>
         {form.frequency === "weekly" && (
           <Field title="Ultima apariție" htmlFor="act-until" error={shown("until")}>
-            <DateInput disabled={disabled} id="act-until" value={form.until} min={shiftDate(form.date, 7)} onChange={(v) => onChange("until", v)} />
+            <DateInput disabled={scheduleDisabled} id="act-until" value={form.until} min={shiftDate(form.date, 7)} onChange={(v) => onChange("until", v)} />
           </Field>
         )}
       </div>
