@@ -858,17 +858,38 @@ function scheduleFor(date: string, facilityId: string | null) {
   };
 }
 
-const PEOPLE = ["Andrei Munteanu", "Daria Stan", "Radu Ionescu", "Elena Rusu", "Vlad Ciobanu", "Ioana Popescu"];
+/**
+ * Persoanele care rezervă în mock. Id-ul fiecăreia este `u-<poziția + 1>`, la fel ca în directorul
+ * de utilizatori (USERS). Cristina Pop (u-10) nu are rezervări: contul ei nu e confirmat.
+ */
+const PEOPLE = [
+  "Andrei Munteanu",
+  "Daria Stan",
+  "Radu Ionescu",
+  "Elena Rusu",
+  "Vlad Ciobanu",
+  "Ioana Popescu",
+  "Maria Enache",
+  "Ioana Pavel",
+  "Alexandru Luca",
+];
 // Cine nu e student: profesorii nu au cotă lunară, externii nu au cotă inclusă.
 const ROLE_OF: Record<string, string> = { "Elena Rusu": "professor", "Vlad Ciobanu": "external" };
+/** Contul suspendat are doar rezervări mai vechi de atâtea zile (după suspendare nu mai poate rezerva). */
+const SUSPENDED_SINCE_DAYS = 5;
 
 type MockBooking = ReturnType<typeof seedBookings>[number];
 
+/** Ziua săptămânii unei date: 0 = duminică, 1 = luni, …, 6 = sâmbătă. */
+const weekdayOf = (date: string) => new Date(`${date}T12:00:00Z`).getUTCDay();
+
 /**
- * Lista de așteptare a unei zile: intervalele ocupate de la fitness (18:00 și 19:00).
- * Andrei are deja 18:00 și așteaptă 19:00 (mutare); intervalele trecute au expirat.
+ * Lista de așteptare: doar joia, la fitness, unde 18:00 și 19:00 sunt ocupate.
+ * Maria și Ioana Pavel așteaptă 18:00; Andrei are deja 18:00 și așteaptă 19:00 (mutare).
+ * Intervalele trecute au expirat.
  */
 function seedWaitlist(date: string): MockWaitlistEntry[] {
+  if (weekdayOf(date) !== 4) return [];
   const rows: Array<[number, string, string, number, string | null]> = [
     [18, "u-7", "Maria Enache", 1, null],
     [18, "u-8", "Ioana Pavel", 2, null],
@@ -891,50 +912,74 @@ function seedWaitlist(date: string): MockWaitlistEntry[] {
   });
 }
 
-/** Rezervările inițiale ale unei zile (aceleași la fiecare pornire). */
+/**
+ * Programul săptămânal al rezervărilor: fiecare interval (facilitate, oră) și cine îl
+ * rezervă în fiecare zi a săptămânii (1 = luni … 6 = sâmbătă; lipsă = liber).
+ * Fiecare persoană rezervă de 2–4 ori pe săptămână, ca în realitate; lunea și joia sunt
+ * zilele aglomerate (joi, la bazin, 18:00 are 3 culoare ocupate).
+ * Poziția intervalului în listă dă id-ul și codul rezervării (b-<zi>-<n>, USV-LLZZ-<183 + n>),
+ * deci codurile rămân aceleași ca înainte.
+ */
+const WEEKLY: Array<[string, number, Partial<Record<number, number>>]> = [
+  [FITNESS, 18, { 1: 0, 4: 0, 5: 1 }], //       Andrei luni și joi, Daria vineri
+  [FITNESS, 19, { 1: 1, 3: 6, 4: 1 }], //       Daria luni și joi, Maria miercuri
+  [FITNESS, 20, { 1: 2, 3: 2, 5: 8 }], //       Radu luni și miercuri, Alexandru vineri (înainte de suspendare)
+  [TEREN, 10, { 1: 4, 6: 4 }], //               Vlad luni și sâmbătă
+  [SALA, 17, { 1: 3, 2: 3, 3: 3, 4: 3 }], //    Elena (cadru didactic) de luni până joi
+  [BAZIN, 9, { 1: 7 }], //                      Ioana Pavel luni
+  [BAZIN, 9, { 1: 5 }], //                      Ioana Popescu luni
+  [BAZIN, 18, { 2: 5, 4: 7 }], //               Ioana Popescu marți, Ioana Pavel joi
+  [BAZIN, 18, { 4: 4 }], //                     Vlad joi
+  [BAZIN, 18, { 4: 6 }], //                     Maria joi
+  [BAZIN, 18, {}], //                           (liber)
+  // Anulată de utilizator (pentru fila „Anulate”; nu apare în orar).
+  [SALA, 12, { 2: 5 }], //                      Ioana Popescu marți
+];
+/** Poziția intervalului anulat de utilizator în WEEKLY. */
+const CANCELLED_SLOT = WEEKLY.length - 1;
+
+/** Rezervările inițiale ale unei zile, după programul săptămânal (aceleași la fiecare pornire). */
 function seedBookings(date: string) {
-  const slots: Array<[string, number, string]> = [
-    [FITNESS, 18, PEOPLE[0]],
-    [FITNESS, 19, PEOPLE[1]],
-    [FITNESS, 20, PEOPLE[2]],
-    [TEREN, 10, PEOPLE[4]],
-    [SALA, 17, PEOPLE[3]],
-    [BAZIN, 9, PEOPLE[0]],
-    [BAZIN, 9, PEOPLE[5]],
-    [BAZIN, 18, PEOPLE[1]],
-    [BAZIN, 18, PEOPLE[2]],
-    [BAZIN, 18, PEOPLE[3]],
-    [BAZIN, 18, PEOPLE[4]],
-    // Ultima rezervare a zilei e anulată de utilizator (pentru fila „Anulate”; nu apare în orar).
-    [SALA, 12, PEOPLE[5]],
-  ];
+  const weekday = weekdayOf(date);
   const mmdd = date.slice(5, 7) + date.slice(8, 10);
-  const seeded = slots.map(([facilityId, hour, name], index) => ({
-    id: `b-${date}-${index + 1}`,
-    code: `USV-${mmdd}-${184 + index}`,
-    facility: { id: facilityId, name: facilityName(facilityId), campus: "Campus USV" },
-    user: { id: `u-${PEOPLE.indexOf(name) + 1}`, name, role: ROLE_OF[name] ?? "student" },
-    startTime: at(date, hour),
-    endTime: at(date, hour + 1),
-    durationMinutes: 60,
-    status: "confirmed" as string,
-    usesIncludedQuota: (ROLE_OF[name] ?? "student") === "student",
-    cancelledBy: null as string | null,
-    cancelReason: null as string | null,
-    cancelledAt: null as string | null,
-    quotaRefunded: false,
-  }));
-  const cancelled = seeded[seeded.length - 1];
-  cancelled.status = "cancelled";
-  cancelled.cancelledBy = "user";
-  cancelled.cancelReason = "Nu mai pot ajunge la ora rezervată.";
-  // Anulată cu o zi înainte, dar niciodată „în viitor” față de momentul de acum. Pentru zilele
-  // care urmează, momentul vine la 25 de minute după crearea rezervării (vezi bookingCreatedAt),
-  // diferit pentru fiecare zi, ca jurnalul să nu aibă toate anulările la aceeași oră.
-  const daysAhead = Math.max(0, Math.round((Date.parse(cancelled.startTime) - Date.now()) / 86_400_000));
-  const latest = Date.now() - (71 + daysAhead * 37) * 60_000;
-  cancelled.cancelledAt = new Date(Math.min(Date.parse(cancelled.startTime) - 86_400_000, latest)).toISOString();
-  cancelled.quotaRefunded = cancelled.usesIncludedQuota;
+  const suspendedFrom = addDays(today(), -SUSPENDED_SINCE_DAYS);
+  const seeded = WEEKLY.flatMap(([facilityId, hour, byDay], index) => {
+    const person = byDay[weekday];
+    if (person === undefined) return [];
+    const name = PEOPLE[person];
+    // Contul suspendat nu mai are rezervări după suspendare.
+    // (USERS e definit mai jos, dar zilele se generează doar la cereri, după încărcarea modulului.)
+    if (USERS.some((u) => u.id === `u-${person + 1}` && u.accessStatus === "suspended") && date > suspendedFrom) return [];
+    const role = ROLE_OF[name] ?? "student";
+    const booking = {
+      id: `b-${date}-${index + 1}`,
+      code: `USV-${mmdd}-${184 + index}`,
+      facility: { id: facilityId, name: facilityName(facilityId), campus: "Campus USV" },
+      user: { id: `u-${person + 1}`, name, role },
+      startTime: at(date, hour),
+      endTime: at(date, hour + 1),
+      durationMinutes: 60,
+      status: "confirmed" as string,
+      usesIncludedQuota: role === "student",
+      cancelledBy: null as string | null,
+      cancelReason: null as string | null,
+      cancelledAt: null as string | null,
+      quotaRefunded: false,
+    };
+    if (index === CANCELLED_SLOT) {
+      booking.status = "cancelled";
+      booking.cancelledBy = "user";
+      booking.cancelReason = "Nu mai pot ajunge la ora rezervată.";
+      // Anulată cu o zi înainte, dar niciodată „în viitor” față de momentul de acum. Pentru zilele
+      // care urmează, momentul vine la 25 de minute după crearea rezervării (vezi bookingCreatedAt),
+      // diferit pentru fiecare zi, ca jurnalul să nu aibă toate anulările la aceeași oră.
+      const daysAhead = Math.max(0, Math.round((Date.parse(booking.startTime) - Date.now()) / 86_400_000));
+      const latest = Date.now() - (71 + daysAhead * 37) * 60_000;
+      booking.cancelledAt = new Date(Math.min(Date.parse(booking.startTime) - 86_400_000, latest)).toISOString();
+      booking.quotaRefunded = booking.usesIncludedQuota;
+    }
+    return [booking];
+  });
   return seeded;
 }
 
