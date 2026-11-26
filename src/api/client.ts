@@ -49,9 +49,12 @@ export type RequestOptions = {
   signal?: AbortSignal;
 };
 
+/** Metodele HTTP folosite de aplicație (PUT și DELETE doar în zona de administrare). */
+export type HttpMethod = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
+
 export async function apiRequest<T>(
   path: string,
-  method: "GET" | "POST" | "PATCH" = "GET",
+  method: HttpMethod = "GET",
   body?: unknown,
   headers: Record<string, string> = {},
   options: RequestOptions = {},
@@ -62,7 +65,9 @@ export async function apiRequest<T>(
   if (useMock) {
     await delay();
     const authMock = await import("../mock/authMock");
-    const authResult = authMock.authMockHandler(path, method, token);
+    // Mock-urile vechi știu doar GET / POST / PATCH; PUT și DELETE există doar la /admin.
+    const legacyMethod = method as "GET" | "POST" | "PATCH";
+    const authResult = authMock.authMockHandler(path, legacyMethod, token);
     if (authResult !== undefined) {
       return unwrap<T>(authResult);
     }
@@ -72,7 +77,7 @@ export async function apiRequest<T>(
       return unwrap<T>(adminMock.adminMockHandler(path, method, token, body));
     }
     const mockModule = await import("../mock/apiMock");
-    return unwrap<T>(mockModule.mockApiHandler(path, method, body));
+    return unwrap<T>(mockModule.mockApiHandler(path, legacyMethod, body));
   }
 
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -112,6 +117,9 @@ export async function apiRequest<T>(
 
     throw new ApiError(`Cererea a eșuat (${response.status}).`, response.status);
   }
+
+  // 204 No Content (ex. DELETE): nu există corp de citit.
+  if (response.status === 204) return undefined as T;
 
   return unwrap<T>(await response.json());
 }

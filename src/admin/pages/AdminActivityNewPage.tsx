@@ -12,136 +12,19 @@
 // Serverul reverifică oricum totul la salvare; verificările de aici sunt doar
 // pentru o experiență mai bună, nu o măsură de securitate.
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { ApiError } from "../../api/client";
 import { useAuth } from "../../context/useAuth";
-import { ChevronDownIcon } from "../AdminIcons";
-import {
-  ACTIVITY_TYPE_LABEL,
-  createActivity,
-  getFacilityKinds,
-  previewActivity,
-  type Activity,
-  type ActivityInput,
-  type ActivityPreview,
-  type ActivityType,
-  type FacilityKind,
-} from "../api";
-import {
-  END_HOURS,
-  START_HOURS,
-  bucharestIso,
-  bucharestParts,
-  formatDayMonth,
-  formatDayMonthYear,
-  formatTimeRange,
-  hourLabel,
-  isValidIsoDate,
-  shiftDate,
-  todayInBucharest,
-} from "../time";
+import { createActivity, getFacilityKinds, previewActivity, type Activity, type ActivityInput, type ActivityPreview, type FacilityKind } from "../api";
+import { ID_PATTERN, initialForm, validate, type ActivityForm } from "../activityForm";
+import { ActivityFields, AffectedList, Card, primaryButton, secondaryButton } from "../components/ActivityForm";
+import { bucharestParts, formatDayMonth, formatTimeRange, hourLabel, isValidIsoDate } from "../time";
 
-// Limitele din contract (ActivityCreate). Le aplicăm și în câmpuri (maxLength).
-const NAME_MIN = 3;
-const NAME_MAX = 150;
-const ORGANIZER_MAX = 150;
-const MESSAGE_MAX = 200;
-/** O repetare săptămânală durează cel mult un semestru (26 de săptămâni). */
-const MAX_WEEKS = 26;
 /** Cât așteptăm după ultima tastare înainte de verificarea automată (ms). */
 const PREVIEW_DELAY = 400;
-// Forma acceptată pentru id-ul facilității din adresă (UUID sau număr).
-const ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
-
-type Form = {
-  name: string;
-  type: ActivityType;
-  facilityId: string;
-  organizer: string;
-  date: string;
-  startHour: number;
-  endHour: number;
-  frequency: "none" | "weekly";
-  until: string;
-  calendarMessage: string;
-};
 
 type Step = "details" | "review" | "done";
-
-const input =
-  "h-11 w-full rounded-lg border border-[#dde5e2] bg-white px-3 text-sm text-heading outline-none focus:border-primary disabled:bg-bg";
-const label = "text-xs font-semibold text-muted";
-const secondaryButton =
-  "flex h-10 items-center rounded-lg border border-[#dde5e2] bg-white px-4 text-[13px] font-semibold text-heading hover:bg-bg disabled:opacity-50";
-const primaryButton =
-  "flex h-10 items-center rounded-lg bg-primary px-5 text-[13px] font-semibold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50";
-
-/** Ora curentă în România (0–23), ca să nu propunem ore deja trecute. */
-function currentHour() {
-  return bucharestParts(new Date().toISOString()).hour;
-}
-
-/** Valorile de pornire: ziua și facilitatea din adresă (dacă sunt valide), altfel azi. */
-function initialForm(dayParam: string | null, facilityParam: string | null): Form {
-  const today = todayInBucharest();
-  let date = isValidIsoDate(dayParam) && dayParam >= today ? dayParam : today;
-  let startHour = 12;
-  if (date === today) {
-    const next = Math.max(currentHour() + 1, START_HOURS[0]);
-    if (next > START_HOURS[START_HOURS.length - 1]) date = shiftDate(today, 1);
-    else startHour = Math.max(startHour, next);
-  }
-  return {
-    name: "",
-    type: "event",
-    facilityId: facilityParam && ID_PATTERN.test(facilityParam) ? facilityParam : "",
-    organizer: "",
-    date,
-    startHour,
-    endHour: Math.min(startHour + 2, END_HOURS[END_HOURS.length - 1]),
-    frequency: "none",
-    until: "",
-    calendarMessage: "",
-  };
-}
-
-/**
- * Verifică formularul. Întoarce fie corpul cererii (ActivityCreate), fie
- * mesajele de eroare pe câmpuri. Aceleași reguli le aplică și serverul.
- */
-function validate(form: Form, facilities: FacilityKind[]): { body: ActivityInput | null; errors: Partial<Record<keyof Form, string>> } {
-  const errors: Partial<Record<keyof Form, string>> = {};
-  const name = form.name.trim();
-  const organizer = form.organizer.trim();
-  const today = todayInBucharest();
-
-  if (name.length < NAME_MIN) errors.name = `Denumirea are cel puțin ${NAME_MIN} caractere.`;
-  if (!organizer) errors.organizer = "Completează organizatorul sau responsabilul.";
-  if (!facilities.some((f) => f.id === form.facilityId)) errors.facilityId = "Alege facilitatea.";
-  if (!isValidIsoDate(form.date) || form.date < today) errors.date = "Alege o zi de azi înainte.";
-  else if (form.date === today && form.startHour <= currentHour()) errors.startHour = "Ora de început a trecut deja.";
-  if (form.endHour <= form.startHour) errors.endHour = "Sfârșitul trebuie să fie după început.";
-  if (form.frequency === "weekly") {
-    if (!isValidIsoDate(form.until) || form.until <= form.date) errors.until = "Alege data ultimei apariții, după prima zi.";
-    else if (form.until > shiftDate(form.date, 7 * MAX_WEEKS)) errors.until = `Repetarea durează cel mult ${MAX_WEEKS} de săptămâni.`;
-  }
-  if (Object.keys(errors).length > 0) return { body: null, errors };
-
-  return {
-    errors,
-    body: {
-      name,
-      type: form.type,
-      facilityId: form.facilityId,
-      organizer,
-      startTime: bucharestIso(form.date, form.startHour),
-      endTime: bucharestIso(form.date, form.endHour),
-      recurrence: { frequency: form.frequency, until: form.frequency === "weekly" ? form.until : null },
-      calendarMessage: form.calendarMessage.trim(),
-    },
-  };
-}
 
 /** Mesajul pentru administrator, după eroarea primită de la server. */
 function describeError(error: unknown): string {
@@ -152,84 +35,13 @@ function describeError(error: unknown): string {
   return error instanceof Error ? error.message : "Operația nu a reușit. Încearcă din nou.";
 }
 
-function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return <section className={`rounded-xl border border-[#dde5e2] bg-white ${className}`}>{children}</section>;
-}
-
-function Field({ title, error, children, htmlFor }: { title: string; error?: string; children: ReactNode; htmlFor?: string }) {
-  return (
-    <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-      <label htmlFor={htmlFor} className={label}>
-        {title}
-      </label>
-      {children}
-      {error && <p className="text-xs text-[#ac443c]">{error}</p>}
-    </div>
-  );
-}
-
-/** Listă derulantă cu săgeata din Figma. */
-function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
-  return (
-    <div className="relative min-w-0 flex-1">
-      <select {...props} className={`${input} appearance-none pr-8`} />
-      <ChevronDownIcon className="pointer-events-none absolute top-1/2 right-3 size-3.5 -translate-y-1/2 text-heading" />
-    </div>
-  );
-}
-
-/** Câmp de dată afișat ca „22 octombrie 2026”, cu selectorul nativ al browserului. */
-function DateInput({ id, value, min, onChange }: { id: string; value: string; min: string; onChange: (value: string) => void }) {
-  return (
-    <div className={`${input} relative flex items-center`}>
-      {isValidIsoDate(value) ? formatDayMonthYear(value) : <span className="text-muted">Alege data</span>}
-      <input
-        id={id}
-        type="date"
-        value={value}
-        min={min}
-        onClick={(event) => {
-          try {
-            event.currentTarget.showPicker();
-          } catch {
-            // browsere fără showPicker: câmpul rămâne utilizabil de la tastatură
-          }
-        }}
-        onChange={(event) => {
-          if (isValidIsoDate(event.target.value)) onChange(event.target.value);
-        }}
-        className="absolute inset-0 cursor-pointer opacity-0"
-      />
-    </div>
-  );
-}
-
-/** Rezervările care s-ar anula, ca listă scurtă: „Daria Stan · 18:00–19:00”. */
-function AffectedList({ preview, limit }: { preview: ActivityPreview; limit?: number }) {
-  const shown = limit ? preview.affectedBookings.slice(0, limit) : preview.affectedBookings;
-  const rest = preview.affectedBookings.length - shown.length;
-  return (
-    <ul className="flex flex-col gap-1">
-      {shown.map((b) => (
-        <li key={b.id} className="flex flex-wrap gap-x-1">
-          <span className="font-semibold">{b.userName ?? b.code}</span>
-          <span>
-            · {formatDayMonth(bucharestParts(b.startTime).date)} · {formatTimeRange(b.startTime, b.endTime)}
-          </span>
-        </li>
-      ))}
-      {rest > 0 && <li>și încă {rest}</li>}
-    </ul>
-  );
-}
-
 export default function AdminActivityNewPage() {
   const { logout } = useAuth();
   const [params] = useSearchParams();
   const dayParam = params.get("zi");
   const facilityParam = params.get("facilitate");
 
-  const [form, setForm] = useState<Form>(() => initialForm(dayParam, facilityParam));
+  const [form, setForm] = useState<ActivityForm>(() => initialForm(dayParam, facilityParam));
   const [facilities, setFacilities] = useState<FacilityKind[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [showErrors, setShowErrors] = useState(false);
@@ -292,7 +104,7 @@ export default function AdminActivityNewPage() {
   if (facilityParam && ID_PATTERN.test(facilityParam)) backQuery.set("facilitate", facilityParam);
   const backLink = `/admin/orar${backQuery.size ? `?${backQuery.toString()}` : ""}`;
 
-  const update = <K extends keyof Form>(key: K, value: Form[K]) => {
+  const update = <K extends keyof ActivityForm>(key: K, value: ActivityForm[K]) => {
     setSubmitError(null);
     setForm((current) => {
       const next = { ...current, [key]: value };
@@ -374,7 +186,6 @@ export default function AdminActivityNewPage() {
     setStep("details");
   };
 
-  const shownError = (key: keyof Form) => (showErrors ? errors[key] : undefined);
   const interval = `${formatDayMonth(form.date)} · ${hourLabel(form.startHour)}–${hourLabel(form.endHour)}`;
   const repeatNote =
     form.frequency === "weekly" && isValidIsoDate(form.until) ? ` · săptămânal până la ${formatDayMonth(form.until)}` : "";
@@ -429,99 +240,7 @@ export default function AdminActivityNewPage() {
                 void verifyAndPublish();
               }}
             >
-              <Field title="Denumire" htmlFor="act-name" error={shownError("name")}>
-                <input
-                  id="act-name"
-                  className={input}
-                  value={form.name}
-                  maxLength={NAME_MAX}
-                  placeholder="Eveniment universitar · Sală de sport"
-                  onChange={(e) => update("name", e.target.value)}
-                />
-              </Field>
-              <div className="flex flex-col gap-4 sm:flex-row">
-                <Field title="Tip de activitate" htmlFor="act-type">
-                  <Select id="act-type" value={form.type} onChange={(e) => update("type", e.target.value as ActivityType)}>
-                    {(Object.keys(ACTIVITY_TYPE_LABEL) as ActivityType[]).map((type) => (
-                      <option key={type} value={type}>
-                        {ACTIVITY_TYPE_LABEL[type]}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-                <Field title="Facilitate" htmlFor="act-facility" error={shownError("facilityId")}>
-                  <Select id="act-facility" value={form.facilityId} onChange={(e) => update("facilityId", e.target.value)}>
-                    {facilities.length === 0 && <option value="">Se încarcă…</option>}
-                    {facilities.map((f) => (
-                      <option key={f.id} value={f.id}>
-                        {f.name}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-              </div>
-              <Field title="Organizator / responsabil" htmlFor="act-organizer" error={shownError("organizer")}>
-                <input
-                  id="act-organizer"
-                  className={input}
-                  value={form.organizer}
-                  maxLength={ORGANIZER_MAX}
-                  placeholder="FEFS · Secretariatul facultății"
-                  onChange={(e) => update("organizer", e.target.value)}
-                />
-              </Field>
-              <div className="flex flex-col gap-4 sm:flex-row">
-                <Field title="Data" htmlFor="act-date" error={shownError("date")}>
-                  <DateInput id="act-date" value={form.date} min={todayInBucharest()} onChange={(v) => update("date", v)} />
-                </Field>
-                <Field title="Interval" htmlFor="act-start" error={shownError("startHour") ?? shownError("endHour")}>
-                  <div className="flex items-center gap-2">
-                    <Select id="act-start" aria-label="Ora de început" value={form.startHour} onChange={(e) => update("startHour", Number(e.target.value))}>
-                      {START_HOURS.map((h) => (
-                        <option key={h} value={h}>
-                          {hourLabel(h)}
-                        </option>
-                      ))}
-                    </Select>
-                    <span className="text-muted">–</span>
-                    <Select aria-label="Ora de sfârșit" value={form.endHour} onChange={(e) => update("endHour", Number(e.target.value))}>
-                      {END_HOURS.filter((h) => h > form.startHour).map((h) => (
-                        <option key={h} value={h}>
-                          {hourLabel(h)}
-                        </option>
-                      ))}
-                    </Select>
-                  </div>
-                </Field>
-              </div>
-              <div className="flex flex-col gap-4 sm:flex-row">
-                <Field title="Repetare" htmlFor="act-repeat">
-                  <Select
-                    id="act-repeat"
-                    value={form.frequency}
-                    onChange={(e) => update("frequency", e.target.value === "weekly" ? "weekly" : "none")}
-                  >
-                    <option value="none">Fără repetare</option>
-                    <option value="weekly">Săptămânal</option>
-                  </Select>
-                </Field>
-                {form.frequency === "weekly" && (
-                  <Field title="Ultima apariție" htmlFor="act-until" error={shownError("until")}>
-                    <DateInput id="act-until" value={form.until} min={shiftDate(form.date, 7)} onChange={(v) => update("until", v)} />
-                  </Field>
-                )}
-              </div>
-              <Field title="Mesaj vizibil în calendar" htmlFor="act-message">
-                <input
-                  id="act-message"
-                  className={input}
-                  value={form.calendarMessage}
-                  maxLength={MESSAGE_MAX}
-                  placeholder="Sală rezervată pentru eveniment universitar."
-                  onChange={(e) => update("calendarMessage", e.target.value)}
-                />
-              </Field>
-
+              <ActivityFields form={form} facilities={facilities} errors={showErrors ? errors : {}} onChange={update} />
               {submitError && (
                 <p role="alert" className="rounded-lg bg-[#fcedea] px-3 py-2 text-sm text-[#ac443c]">
                   {submitError}
@@ -650,6 +369,14 @@ export default function AdminActivityNewPage() {
             </p>
           </div>
         </Card>
+      </div>
+
+      <div className="flex flex-col gap-1 rounded-xl bg-[#e7f2ef] px-5 py-4 text-primary">
+        <p className="text-[13px] font-semibold">Gestionarea unei activități publicate</p>
+        <p className="text-xs">
+          Din înregistrarea din orar: Vezi detalii · Editează activitatea · Anulează activitatea. Anularea eliberează numai
+          intervalele viitoare ale activității selectate.
+        </p>
       </div>
     </>
   );

@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import AdminLayout from "./AdminLayout";
+import AdminActivityManagePage from "./pages/AdminActivityManagePage";
 import AdminActivityNewPage from "./pages/AdminActivityNewPage";
 import AdminSchedulePage from "./pages/AdminSchedulePage";
 
@@ -12,6 +13,7 @@ import AdminSchedulePage from "./pages/AdminSchedulePage";
 // Momentan este implementată secțiunea „Orar și incidente”:
 //   /admin/orar                    → orarul zilei
 //   /admin/orar/activitate-noua    → „Adaugă activitate USV”
+//   /admin/orar/activitati/:id     → „Gestionează activitatea USV”
 // Orice altă adresă /admin/... duce înapoi la orar.
 export default function AdminApp() {
   return (
@@ -19,6 +21,7 @@ export default function AdminApp() {
       <Route element={<AdminLayout />}>
         <Route path="orar" element={<AdminSchedulePage />} />
         <Route path="orar/activitate-noua" element={<AdminActivityNewPage />} />
+        <Route path="orar/activitati/:activityId" element={<AdminActivityManagePage />} />
         <Route path="*" element={<Navigate to="/admin/orar" replace />} />
       </Route>
     </Routes>

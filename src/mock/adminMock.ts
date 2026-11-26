@@ -1,6 +1,7 @@
 // Mock pentru rutele /admin/* din contract:
 //   GET  /admin/schedule, GET /admin/bookings
 //   POST /admin/activities/preview, POST /admin/activities
+//   GET / PUT / DELETE /admin/activities/{activityId}
 // Se comportă ca backend-ul: fără token → 401, alt rol decât administrator → 403,
 // date invalide → 400 / 422, suprapuneri → 409. Răspunsurile au forma din Swagger.
 //
@@ -8,12 +9,10 @@
 // pagina e deschisă, ca fluxurile să poată fi testate cap-coadă fără backend.
 // La reîncărcarea paginii, totul revine la datele inițiale.
 
-import { ApiError } from "../api/client";
+import { ApiError, type HttpMethod } from "../api/client";
 import { mockRoleForToken } from "./authMock";
 import { facilityIds } from "./apiMock";
 import { facilities } from "./data";
-
-type Method = "GET" | "POST" | "PATCH";
 
 
 const TIMEZONE = "Europe/Bucharest";
@@ -349,6 +348,67 @@ function createActivity(raw: unknown) {
   return activityJson(activity);
 }
 
+/** Găsește activitatea; pentru cele din șablon, ziua se află din id (act-AAAALLZZ-n). */
+function findActivity(id: string): MockActivity {
+  const fromTemplate = /^act-(\d{4})(\d{2})(\d{2})-\d+$/.exec(id);
+  if (fromTemplate) {
+    const date = `${fromTemplate[1]}-${fromTemplate[2]}-${fromTemplate[3]}`;
+    if (validDate(date)) ensureDay(date);
+  }
+  const activity = activities.get(id);
+  if (!activity) fail(404, "NOT_FOUND", "Activitatea nu există.");
+  return activity;
+}
+
+/** PUT: aceleași reguli ca la creare, dar activitatea nu se suprapune „cu ea însăși”. */
+function updateActivity(id: string, raw: unknown) {
+  const activity = findActivity(id);
+  if (activity.status === "cancelled") fail(409, "ACTIVITY_CANCELLED", "Activitatea a fost anulată și nu mai poate fi editată.");
+  const input = parseActivityBody(raw);
+  const { affected, overlapping, maintenance } = conflictsFor(input, id);
+  if (overlapping.length > 0 || maintenance) {
+    fail(409, "ACTIVITY_OVERLAPS_ACTIVITY", "Noul interval se suprapune cu o altă activitate sau cu o blocare de mentenanță.");
+  }
+  if (affected.length > 0 && !input.resolveConflicts) {
+    fail(409, "ACTIVITY_CONFLICTS_WITH_BOOKINGS", `Noul interval are ${affected.length} rezervări suprapuse. Revizuiește-le înainte de salvare.`);
+  }
+  const now = new Date().toISOString();
+  for (const b of affected) {
+    b.status = "cancelled";
+    b.cancelledBy = "university_activity";
+    b.cancelReason = `Interval rezervat pentru „${input.name}”.`;
+    b.cancelledAt = now;
+    b.quotaRefunded = b.usesIncludedQuota;
+  }
+  Object.assign(activity, {
+    name: input.name,
+    type: input.type,
+    facilityId: input.facilityId,
+    organizer: input.organizer,
+    date: input.date,
+    from: input.from,
+    to: input.to,
+    recurrence: input.recurrence,
+    calendarMessage: input.calendarMessage,
+  });
+  return activityJson(activity);
+}
+
+/** DELETE: anulează activitatea (în mock, toată), dacă mai are intervale viitoare. */
+function cancelActivity(id: string, scope: string | null) {
+  if (scope !== null && !["this_occurrence", "this_and_following", "series"].includes(scope)) {
+    fail(400, "VALIDATION_ERROR", "Parametrul scope este invalid.");
+  }
+  const activity = findActivity(id);
+  if (activity.status === "cancelled") fail(409, "ACTIVITY_CANCELLED", "Activitatea este deja anulată.");
+  const days = occurrences(activity);
+  if (Date.parse(at(days[days.length - 1], activity.to)) <= Date.now()) {
+    fail(409, "ACTIVITY_ALREADY_ENDED", "Activitatea s-a încheiat deja; nu mai are intervale de eliberat.");
+  }
+  activity.status = "cancelled";
+  return undefined; // 204 No Content
+}
+
 function scheduleFor(date: string, facilityId: string | null) {
   const entries = entriesFor(date);
   const dayLabel =
@@ -456,7 +516,7 @@ function requireAdmin(token: string | null | undefined) {
   if (role !== "administrator") fail(403, "FORBIDDEN", "Nu ai permisiunea necesară.");
 }
 
-export function adminMockHandler(path: string, method: Method, token: string | null | undefined, body?: unknown) {
+export function adminMockHandler(path: string, method: HttpMethod, token: string | null | undefined, body?: unknown) {
   requireAdmin(token);
 
   const [route, queryString = ""] = path.split("?");
@@ -507,6 +567,15 @@ export function adminMockHandler(path: string, method: Method, token: string | n
 
   if (route === "/admin/activities/preview" && method === "POST") return previewActivity(body);
   if (route === "/admin/activities" && method === "POST") return createActivity(body);
+
+  // /admin/activities/{activityId}: id-ul trebuie să aibă forma permisă (fără „/”, „..” etc.).
+  const activityRoute = /^\/admin\/activities\/([A-Za-z0-9_-]{1,64})$/.exec(route);
+  if (activityRoute) {
+    const id = decodeURIComponent(activityRoute[1]);
+    if (method === "GET") return activityJson(findActivity(id));
+    if (method === "PUT") return updateActivity(id, body);
+    if (method === "DELETE") return cancelActivity(id, query.get("scope"));
+  }
 
   fail(404, "NOT_FOUND", "Resursa de administrare nu există.");
 }

@@ -8,7 +8,8 @@
 //   GET /facilities      → doar ca să știm care facilitate are culoare (bazinul)
 //
 // „Adaugă activitate USV” deschide formularul de activitate, cu ziua și
-// facilitatea alese aici deja completate. Celelalte acțiuni (blochează interval,
+// facilitatea alese aici deja completate. Un click pe un curs sau un eveniment
+// USV din grilă deschide „Gestionează activitatea USV”. Celelalte acțiuni (blochează interval,
 // detalii) sunt afișate ca în Figma, dar inactive: țin de pașii următori.
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
@@ -385,17 +386,36 @@ export default function AdminSchedulePage() {
                         const style = BLOCK_STYLES[entry.blockType];
                         const incidentCode =
                           entry.blockType === "repair" && incident && entry.incidentId === incident.id ? incident.code : null;
-                        return (
-                          <div
-                            key={`${entry.startTime}-${entry.title}`}
-                            className={`absolute inset-x-[5px] flex flex-col gap-0.5 overflow-hidden rounded-[7px] px-[10px] py-1 leading-[1.4] ${style.box}`}
-                            style={{ top: from * ROW + 3, height: (to - from) * ROW - 6 }}
-                          >
+                        const className = `absolute inset-x-[5px] flex flex-col gap-0.5 overflow-hidden rounded-[7px] px-[10px] py-1 leading-[1.4] ${style.box}`;
+                        const position = { top: from * ROW + 3, height: (to - from) * ROW - 6 };
+                        const content = (
+                          <>
                             <p className="truncate text-xs font-semibold">{entry.title}</p>
                             <p className="truncate text-[11px]">
                               {formatTimeRange(entry.startTime, entry.endTime)}
                               {incidentCode && ` · ${incidentCode}`} · {style.label}
                             </p>
+                          </>
+                        );
+                        // Cursurile și evenimentele USV se deschid în „Gestionează activitatea USV”.
+                        // Id-ul vine de la server, dar a fost deja verificat în api.ts și e codificat în adresă.
+                        if (entry.activityId) {
+                          const query = new URLSearchParams(facilityFilter ? { zi: day, facilitate: facilityFilter } : { zi: day });
+                          return (
+                            <Link
+                              key={`${entry.startTime}-${entry.title}`}
+                              to={`/admin/orar/activitati/${encodeURIComponent(entry.activityId)}?${query.toString()}`}
+                              title="Gestionează activitatea"
+                              className={`${className} hover:brightness-95 focus-visible:outline-2 focus-visible:outline-primary`}
+                              style={position}
+                            >
+                              {content}
+                            </Link>
+                          );
+                        }
+                        return (
+                          <div key={`${entry.startTime}-${entry.title}`} className={className} style={position}>
+                            {content}
                           </div>
                         );
                       })}

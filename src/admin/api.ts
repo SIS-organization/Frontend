@@ -392,3 +392,40 @@ export async function createActivity(input: ActivityInput) {
   if (!activity) throw new Error("Răspuns invalid la publicarea activității.");
   return activity;
 }
+
+/** Id-ul ajunge în adresa cererii: îl verificăm și îl codificăm (fără „../” sau „?”). */
+function idPath(id: string): string {
+  if (!identifier(id)) throw new Error("Identificator invalid.");
+  return encodeURIComponent(id);
+}
+
+/** GET /admin/activities/{activityId} — detaliile unei activități. */
+export async function getActivity(id: string, signal?: AbortSignal) {
+  const activity = parseActivity(
+    await apiRequest<unknown>(`/admin/activities/${idPath(id)}`, "GET", undefined, {}, { signal }),
+  );
+  if (!activity) throw new Error("Răspuns invalid pentru activitate.");
+  return activity;
+}
+
+/**
+ * PUT /admin/activities/{activityId} — salvează modificările.
+ * Serverul reverifică intervalul: 409 dacă se suprapune cu rezervări (se poate
+ * retrimite cu `resolveConflicts: true`) sau cu alte activități.
+ */
+export async function updateActivity(id: string, input: ActivityInput) {
+  const activity = parseActivity(await apiRequest<unknown>(`/admin/activities/${idPath(id)}`, "PUT", input));
+  if (!activity) throw new Error("Răspuns invalid la salvarea activității.");
+  return activity;
+}
+
+/** Ce anulăm la o activitate: o singură apariție sau toată seria săptămânală. */
+export type CancelScope = "this_occurrence" | "series";
+
+/**
+ * DELETE /admin/activities/{activityId}?scope=… — anulează activitatea (204).
+ * Serverul eliberează numai intervalele viitoare și informează organizatorul.
+ */
+export async function cancelActivity(id: string, scope: CancelScope) {
+  await apiRequest<unknown>(`/admin/activities/${idPath(id)}?scope=${scope}`, "DELETE");
+}
