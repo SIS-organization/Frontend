@@ -10,7 +10,8 @@
 // „Adaugă activitate USV” deschide formularul de activitate, cu ziua și
 // facilitatea alese aici deja completate. Un click pe un curs sau un eveniment
 // USV din grilă deschide „Gestionează activitatea USV”, iar „Blochează interval”
-// deschide „Blocare pentru mentenanță”. Celelalte acțiuni (blochează interval,
+// deschide „Blocare pentru mentenanță”. Reparațiile / igienizările din grilă și
+// „Gestionează blocările” deschid „Deblocare anticipată”. Celelalte acțiuni (blochează interval,
 // detalii) sunt afișate ca în Figma, dar inactive: țin de pașii următori.
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
@@ -410,13 +411,19 @@ export default function AdminSchedulePage() {
                         );
                         // Cursurile și evenimentele USV se deschid în „Gestionează activitatea USV”.
                         // Id-ul vine de la server, dar a fost deja verificat în api.ts și e codificat în adresă.
-                        if (entry.activityId) {
+                        // Reparațiile și igienizările (incidente) se deschid în „Deblocare anticipată”.
+                        const target = entry.activityId
+                          ? { path: `activitati/${encodeURIComponent(entry.activityId)}`, title: "Gestionează activitatea" }
+                          : entry.incidentId
+                            ? { path: `incidente/${encodeURIComponent(entry.incidentId)}`, title: "Detalii incident și deblocare" }
+                            : null;
+                        if (target) {
                           const query = new URLSearchParams(facilityFilter ? { zi: day, facilitate: facilityFilter } : { zi: day });
                           return (
                             <Link
                               key={`${entry.startTime}-${entry.title}`}
-                              to={`/admin/orar/activitati/${encodeURIComponent(entry.activityId)}?${query.toString()}`}
-                              title="Gestionează activitatea"
+                              to={`/admin/orar/${target.path}?${query.toString()}`}
+                              title={target.title}
                               className={`${className} hover:brightness-95 focus-visible:outline-2 focus-visible:outline-primary`}
                               style={position}
                             >
@@ -504,9 +511,17 @@ export default function AdminSchedulePage() {
             >
               Vezi detaliile rezervării
             </button>
-            <button type="button" disabled title={NOT_READY} className={toolButton}>
+            {/* Incidentul activ al zilei (dacă există) sau pagina de blocare. */}
+            <Link
+              to={
+                incident
+                  ? `/admin/orar/incidente/${encodeURIComponent(incident.id)}?zi=${day}`
+                  : `/admin/orar/blocare?zi=${day}`
+              }
+              className={toolButton}
+            >
               Gestionează blocările
-            </button>
+            </Link>
           </div>
         </Card>
 

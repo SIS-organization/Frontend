@@ -10,7 +10,8 @@
 //      între timp, arătăm noua listă și cerem din nou confirmarea. Altfel:
 //      POST /admin/incidents cu `confirmed: true`. Serverul anulează rezervările
 //      suprapuse, restituie cotele și trimite notificările.
-// În stânga se văd incidentele active ale zilei (GET /admin/incidents?status=active).
+// În stânga se văd incidentele active ale zilei (GET /admin/incidents?status=active),
+// fiecare cu legătură spre „Deblocare anticipată”.
 // Dacă intervalul se suprapune cu un curs sau un eveniment USV, afișăm un avertisment
 // (citim orarul zilelor respective: GET /admin/schedule).
 // Serverul reverifică totul; verificările de aici doar ajută administratorul.
@@ -21,7 +22,7 @@ import { ApiError } from "../../api/client";
 import { useAuth } from "../../context/useAuth";
 import { CheckCheckIcon, CheckIcon, LockOpenIcon, PlusIcon, ShieldCheckIcon, TriangleAlertIcon } from "../AdminIcons";
 import { ID_PATTERN } from "../activityForm";
-import { COMING_SOON } from "../adminNav";
+import { INCIDENT_SHORT, formatSpan } from "../incidentText";
 import {
   CHANNEL_LABEL,
   INCIDENT_TYPES,
@@ -69,15 +70,6 @@ const ROLE_LABEL: Record<string, string> = {
   professor: "Cadru didactic",
   external: "Extern",
   administrator: "Administrator",
-};
-
-/** Denumirea scurtă a incidentului din cardul „Incident activ”. */
-const INCIDENT_SHORT: Record<IncidentType, string> = {
-  urgent_cleaning: "Igienizare urgentă",
-  scheduled_cleaning: "Igienizare programată",
-  repair: "Reparație",
-  equipment_failure: "Defecțiune echipament",
-  maintenance: "Mentenanță",
 };
 
 type BlockForm = {
@@ -149,14 +141,6 @@ function validate(form: BlockForm, facilities: FacilityKind[]) {
     notifyChannels: form.channels,
   };
   return { body, errors };
-}
-
-/** Intervalul unei blocări: „20 octombrie, 14:00–16:00” sau, pe mai multe zile, cu ambele date. */
-function formatSpan(startIso: string, endIso: string) {
-  const start = bucharestParts(startIso);
-  const end = bucharestParts(endIso);
-  if (start.date === end.date) return `${formatDayMonth(start.date)}, ${hourLabel(start.hour)}–${hourLabel(end.hour)}`;
-  return `${formatDayMonth(start.date)} ${hourLabel(start.hour)} – ${formatDayMonth(end.date)} ${hourLabel(end.hour)}`;
 }
 
 /** Inițialele pentru cerculețul din lista de impact („Daria Stan” → „DS”). */
@@ -470,11 +454,14 @@ export default function AdminBlockFacilityPage() {
                   : "Nicio rezervare afectată · nu au fost necesare alerte"}
                 {incident.pendingNotifications > 0 && ` · ${incident.pendingNotifications} în reîncercare`}
               </p>
-              {/* Deblocarea anticipată este ecranul următor; până atunci butonul e inactiv. */}
-              <button type="button" disabled title={COMING_SOON} className={`${secondaryButton} gap-2 self-start disabled:cursor-not-allowed`}>
+              {/* Deschide „Deblocare anticipată” pentru acest incident. */}
+              <Link
+                to={`/admin/orar/incidente/${encodeURIComponent(incident.id)}?zi=${listDay}`}
+                className={`${secondaryButton} gap-2 self-start`}
+              >
                 Deblocare anticipată
                 <LockOpenIcon className="size-4" />
-              </button>
+              </Link>
             </div>
           ))}
           {sortedIncidents.length > 0 && (

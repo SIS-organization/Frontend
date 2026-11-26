@@ -3,6 +3,7 @@
 //   POST /admin/activities/preview, POST /admin/activities
 //   GET / PUT / DELETE /admin/activities/{activityId}
 //   GET /admin/incidents, POST /admin/incidents/preview, POST /admin/incidents
+//   GET /admin/incidents/{id}, GET /admin/incidents/{id}/log, POST /admin/incidents/{id}/reopen
 // Se comportă ca backend-ul: fără token → 401, alt rol decât administrator → 403,
 // date invalide → 400 / 422, suprapuneri → 409. Răspunsurile au forma din Swagger.
 //
@@ -127,7 +128,7 @@ type MockIncident = {
   notifiedUsers: number;
   channels: string[];
   createdAt: string;
-  /** Jurnalul incidentului (AuditLogEntry), folosit de ecranul de deblocare. */
+  /** Jurnalul incidentului (AuditLogEntry; `type` = AuditEventType din contract). */
   log: { id: string; occurredAt: string; type: string; title: string; description: string }[];
 };
 
@@ -148,6 +149,9 @@ function ensureDay(date: string) {
     .forEach((e, index) => {
       const id = `inc-${date.replaceAll("-", "")}-${index + 1}`;
       const end = at(date, e.to);
+      // Blocarea a fost creată în ziua dinainte la 16:00, dar niciodată „în viitor”
+      // (altfel, în jurnal, acțiunile de azi ar apărea înaintea creării ei).
+      const createdAt = new Date(Math.min(Date.parse(at(addDays(date, -1), 16)), Date.now() - 3_600_000)).toISOString();
       const repair = e.blockType === "repair";
       incidents.set(id, {
         id,
@@ -168,19 +172,19 @@ function ensureDay(date: string) {
         quotasRefunded: repair ? 2 : 0,
         notifiedUsers: repair ? 2 : 0,
         channels: ["push", "email"],
-        createdAt: at(addDays(date, -1), 16),
+        createdAt,
         log: [
           {
             id: `${id}-log-1`,
-            occurredAt: at(addDays(date, -1), 16),
-            type: "incident_created",
+            occurredAt: createdAt,
+            type: "maintenance_closure",
             title: repair ? "Blocare aplicată de echipa tehnică" : "Igienizare programată",
             description: `${facilityName(e.facilityId)} · ${String(e.from).padStart(2, "0")}:00–${String(e.to).padStart(2, "0")}:00`,
           },
           ...(repair
             ? [{
                 id: `${id}-log-2`,
-                occurredAt: at(addDays(date, -1), 16),
+                occurredAt: createdAt,
                 type: "notification_sent",
                 title: "2 persoane notificate",
                 description: "Alerte trimise prin push și e-mail; cotele au fost restituite.",
@@ -680,12 +684,72 @@ function createIncident(raw: unknown) {
     channels: input.channels,
     createdAt: now,
     log: [
-      { id: `${id}-log-1`, occurredAt: now, type: "incident_created", title: "Blocare aplicată", description: `${facilityName(input.facilityId)} · ${input.publicReason}` },
-      { id: `${id}-log-2`, occurredAt: now, type: "bookings_cancelled", title: `${affected.length} rezervări anulate`, description: `${refunds} cote restituite.` },
+      { id: `${id}-log-1`, occurredAt: now, type: "maintenance_closure", title: "Blocare aplicată", description: `${facilityName(input.facilityId)} · ${input.publicReason}` },
+      { id: `${id}-log-2`, occurredAt: now, type: "booking_cancelled", title: `${affected.length} rezervări anulate`, description: `${refunds} cote restituite.` },
       { id: `${id}-log-3`, occurredAt: now, type: "notification_sent", title: `${people} persoane notificate`, description: `Canale: ${input.channels.join(", ") || "—"}.` },
     ],
   };
   incidents.set(id, incident);
+  return incidentJson(incident);
+}
+
+/** Găsește incidentul; pentru cele din șablon, ziua se află din id (inc-AAAALLZZ-n). */
+function findIncident(id: string): MockIncident {
+  const fromTemplate = /^inc-(\d{4})(\d{2})(\d{2})-\d+$/.exec(id);
+  if (fromTemplate) {
+    const date = `${fromTemplate[1]}-${fromTemplate[2]}-${fromTemplate[3]}`;
+    if (validDate(date)) ensureDay(date);
+  }
+  const incident = incidents.get(id);
+  if (!incident) fail(404, "NOT_FOUND", "Incidentul nu există.");
+  return incident;
+}
+
+/** GET /admin/incidents/{id}/log: jurnalul în forma AuditLogEntry, în ordine cronologică. */
+function incidentLog(incident: MockIncident) {
+  return [...incident.log]
+    .sort((a, b) => a.occurredAt.localeCompare(b.occurredAt))
+    .map((entry) => ({
+      ...entry,
+      actor: { id: "4", name: "Administratorul Bazei Sportive", role: "administrator" },
+      facilityId: incident.facilityId,
+      reference: incident.code,
+      result: entry.title,
+    }));
+}
+
+/**
+ * POST /admin/incidents/{id}/reopen — deblocare anticipată.
+ * Cere `safetyConfirmed: true`; ora de redeschidere trebuie să fie fixă, în
+ * intervalul blocării și nu în trecut. Rezervările anulate NU se reactivează.
+ */
+function reopenIncident(id: string, raw: unknown) {
+  const incident = findIncident(id);
+  if (!isObject(raw)) fail(400, "VALIDATION_ERROR", "Corpul cererii lipsește.");
+  if (raw.safetyConfirmed !== true) {
+    fail(422, "SAFETY_CONFIRMATION_REQUIRED", "Deblocarea cere confirmarea siguranței de către echipa tehnică.");
+  }
+  if (incident.status !== "active") fail(409, "INCIDENT_NOT_ACTIVE", "Incidentul nu mai este activ.");
+  const slot = localSlot(raw.reopenFrom);
+  if (!slot) fail(422, "INVALID_TIME_RANGE", "Ora de redeschidere trebuie să fie o oră fixă.");
+  const reopenMs = Date.parse(String(raw.reopenFrom));
+  if (reopenMs < Date.parse(incident.start) || reopenMs >= Date.parse(incident.end)) {
+    fail(422, "INVALID_TIME_RANGE", "Ora de redeschidere trebuie să fie în intervalul blocării.");
+  }
+  const currentHourStart = Math.floor(Date.now() / 3_600_000) * 3_600_000;
+  if (reopenMs < currentHourStart) fail(422, "INVALID_TIME_RANGE", "Ora de redeschidere a trecut deja.");
+
+  const reopenedAt = at(slot.date, slot.hour);
+  incident.status = "reopened_early";
+  incident.reopenedAt = reopenedAt;
+  const endSlot = localSlot(incident.end)!;
+  incident.log.push({
+    id: `${incident.id}-log-${incident.log.length + 1}`,
+    occurredAt: new Date().toISOString(),
+    type: "facility_reopened",
+    title: "Deblocare anticipată",
+    description: `${facilityName(incident.facilityId)} redevine disponibilă de la ${String(slot.hour).padStart(2, "0")}:00 (blocarea era până la ${String(endSlot.hour).padStart(2, "0")}:00). Siguranța a fost confirmată de echipa tehnică.`,
+  });
   return incidentJson(incident);
 }
 
@@ -872,6 +936,15 @@ export function adminMockHandler(path: string, method: HttpMethod, token: string
   if (route === "/admin/incidents" && method === "GET") return listIncidents(query);
   if (route === "/admin/incidents/preview" && method === "POST") return previewIncident(body);
   if (route === "/admin/incidents" && method === "POST") return createIncident(body);
+
+  // /admin/incidents/{incidentId}[/log | /reopen]: id-ul trebuie să aibă forma permisă.
+  const incidentRoute = /^\/admin\/incidents\/([A-Za-z0-9_-]{1,64})(\/log|\/reopen)?$/.exec(route);
+  if (incidentRoute && incidentRoute[1] !== "preview") {
+    const id = incidentRoute[1];
+    if (!incidentRoute[2] && method === "GET") return incidentJson(findIncident(id));
+    if (incidentRoute[2] === "/log" && method === "GET") return incidentLog(findIncident(id));
+    if (incidentRoute[2] === "/reopen" && method === "POST") return reopenIncident(id, body);
+  }
 
   // /admin/activities/{activityId}: id-ul trebuie să aibă forma permisă (fără „/”, „..” etc.).
   const activityRoute = /^\/admin\/activities\/([A-Za-z0-9_-]{1,64})$/.exec(route);

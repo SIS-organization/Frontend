@@ -3,6 +3,7 @@ import AdminLayout from "./AdminLayout";
 import AdminActivityManagePage from "./pages/AdminActivityManagePage";
 import AdminActivityNewPage from "./pages/AdminActivityNewPage";
 import AdminBlockFacilityPage from "./pages/AdminBlockFacilityPage";
+import AdminIncidentPage from "./pages/AdminIncidentPage";
 import AdminSchedulePage from "./pages/AdminSchedulePage";
 
 // Rutele zonei /admin/*.
@@ -16,6 +17,7 @@ import AdminSchedulePage from "./pages/AdminSchedulePage";
 //   /admin/orar/activitate-noua    → „Adaugă activitate USV”
 //   /admin/orar/activitati/:id     → „Gestionează activitatea USV”
 //   /admin/orar/blocare            → „Blocare pentru mentenanță”
+//   /admin/orar/incidente/:id      → „Deblocare anticipată” (detalii, istoric, redeschidere)
 // Orice altă adresă /admin/... duce înapoi la orar.
 export default function AdminApp() {
   return (
@@ -25,6 +27,7 @@ export default function AdminApp() {
         <Route path="orar/activitate-noua" element={<AdminActivityNewPage />} />
         <Route path="orar/activitati/:activityId" element={<AdminActivityManagePage />} />
         <Route path="orar/blocare" element={<AdminBlockFacilityPage />} />
+        <Route path="orar/incidente/:incidentId" element={<AdminIncidentPage />} />
         <Route path="*" element={<Navigate to="/admin/orar" replace />} />
       </Route>
     </Routes>

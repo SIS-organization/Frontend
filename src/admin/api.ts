@@ -571,3 +571,57 @@ export async function getActiveIncidents(date: string, signal?: AbortSignal) {
     .filter((i): i is Incident => i !== null);
 }
 
+/** O intrare din jurnalul incidentului (`AuditLogEntry`), cu valorile verificate. */
+export type LogEntry = {
+  id: string;
+  occurredAt: string;
+  title: string;
+  description: string | null;
+  actorName: string | null;
+};
+
+function parseLogEntry(raw: unknown): LogEntry | null {
+  if (!isObject(raw)) return null;
+  const occurredAt = dateTime(raw.occurredAt);
+  const title = text(raw.title);
+  if (!occurredAt || !title) return null;
+  return {
+    id: identifier(raw.id) ?? `${occurredAt}-${title}`,
+    occurredAt,
+    title,
+    description: text(raw.description),
+    actorName: isObject(raw.actor) ? text(raw.actor.name) : null,
+  };
+}
+
+/** GET /admin/incidents/{incidentId} — detaliile unui incident. */
+export async function getIncident(id: string, signal?: AbortSignal) {
+  const incident = parseIncidentRecord(
+    await apiRequest<unknown>(`/admin/incidents/${idPath(id)}`, "GET", undefined, {}, { signal }),
+  );
+  if (!incident) throw new Error("Răspuns invalid pentru incident.");
+  return incident;
+}
+
+/** GET /admin/incidents/{incidentId}/log — jurnalul incidentului, în ordine cronologică. */
+export async function getIncidentLog(id: string, signal?: AbortSignal) {
+  const raw = await apiRequest<unknown>(`/admin/incidents/${idPath(id)}/log`, "GET", undefined, {}, { signal });
+  return list(raw)
+    .map(parseLogEntry)
+    .filter((e): e is LogEntry => e !== null)
+    .sort((a, b) => Date.parse(a.occurredAt) - Date.parse(b.occurredAt));
+}
+
+/**
+ * POST /admin/incidents/{incidentId}/reopen — deblocare anticipată.
+ * Se trimite doar după ce administratorul a confirmat siguranța (`safetyConfirmed: true`).
+ * Rezervările anulate nu se reactivează; doar intervalele rămase redevin libere.
+ */
+export async function reopenIncident(id: string, reopenFrom: string) {
+  const incident = parseIncidentRecord(
+    await apiRequest<unknown>(`/admin/incidents/${idPath(id)}/reopen`, "POST", { reopenFrom, safetyConfirmed: true }),
+  );
+  if (!incident) throw new Error("Răspuns invalid la deblocare.");
+  return incident;
+}
+
