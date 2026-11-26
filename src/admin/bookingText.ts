@@ -1,4 +1,4 @@
-// Texte comune pentru rezervări (orar, fereastra de detalii, pagina de blocare).
+// Texte comune pentru rezervări (orar, pagina Rezervări, fereastra de detalii, pagina de blocare).
 
 import type { BookingStatus, CancelledBy } from "./api";
 
@@ -10,6 +10,16 @@ export const BOOKING_STATUS: Record<BookingStatus, string> = {
   completed: "Finalizată",
   rejected: "Respinsă",
   cancelled: "Anulată",
+};
+
+/** Culoarea etichetei de status (fundal + text). */
+export const BOOKING_STATUS_TONE: Record<BookingStatus, string> = {
+  confirmed: "bg-[#e7f2ef] text-primary",
+  in_verification: "bg-[#fdf3e3] text-[#926018]",
+  awaiting_transfer: "bg-[#fdf3e3] text-[#926018]",
+  completed: "bg-bg text-muted",
+  rejected: "bg-[#fcedea] text-[#ac443c]",
+  cancelled: "bg-[#fcedea] text-[#ac443c]",
 };
 
 /** Rolul persoanei care a rezervat (`Role` din contract). */

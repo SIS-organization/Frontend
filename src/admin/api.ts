@@ -60,6 +60,8 @@ export type AdminBooking = {
   facilityId: string;
   facilityName: string;
   userName: string | null;
+  /** Rolul persoanei (student, professor, external…), dacă serverul îl trimite. */
+  userRole: string | null;
   startTime: string;
   endTime: string;
   status: BookingStatus;
@@ -204,6 +206,7 @@ function parseBooking(raw: unknown): AdminBooking | null {
     facilityId,
     facilityName,
     userName: isObject(raw.user) ? text(raw.user.name) : null,
+    userRole: isObject(raw.user) ? text(raw.user.role) : null,
     startTime: startTime!,
     endTime: endTime!,
     status,
@@ -251,6 +254,77 @@ export async function getAdminBookingsForDay(date: string, facilityId: string | 
     }
   }
   return [...result.values()];
+}
+
+/** Filele paginii „Rezervări” (`tab` din contract). */
+export type BookingsTab = "upcoming" | "history" | "cancelled";
+
+/** Filtrele listei de rezervări; toate sunt opționale. */
+export type BookingsQuery = {
+  tab: BookingsTab;
+  /** Nume sau cod rezervare (ex. USV-1020-184). */
+  q?: string;
+  facilityId?: string | null;
+  from?: string | null;
+  to?: string | null;
+  page: number;
+  pageSize: number;
+};
+
+/** O pagină din lista de rezervări, cu contoarele pentru file. */
+export type BookingsPage = {
+  items: AdminBooking[];
+  page: number;
+  pageSize: number;
+  totalItems: number;
+  totalPages: number;
+  counts: Record<BookingsTab, number | null>;
+};
+
+/** Lungimea maximă a textului căutat (nu trimitem la server texte uriașe). */
+export const SEARCH_MAX = 100;
+
+/**
+ * GET /admin/bookings — o pagină din lista de rezervări (pagina „Rezervări”).
+ * Parametrii sunt verificați înainte de a ajunge în adresă; răspunsul e validat.
+ */
+export async function getAdminBookingsPage(params: BookingsQuery, signal?: AbortSignal): Promise<BookingsPage> {
+  const query = new URLSearchParams({ tab: params.tab, page: String(params.page), pageSize: String(params.pageSize) });
+  if (!Number.isInteger(params.page) || params.page < 1) throw new Error("Pagină invalidă.");
+  const q = params.q?.trim() ?? "";
+  if (q) query.set("q", q.slice(0, SEARCH_MAX));
+  if (params.facilityId) {
+    if (!identifier(params.facilityId)) throw new Error("Facilitate invalidă.");
+    query.set("facilityId", params.facilityId);
+  }
+  if (params.from) {
+    requireDate(params.from);
+    query.set("from", params.from);
+  }
+  if (params.to) {
+    requireDate(params.to);
+    query.set("to", params.to);
+  }
+
+  const raw = await apiRequest<unknown>(`/admin/bookings?${query.toString()}`, "GET", undefined, {}, { signal });
+  if (!isObject(raw)) throw new Error("Răspuns invalid pentru rezervări.");
+  const counts = isObject(raw.counts) ? raw.counts : {};
+  const optionalCount = (value: unknown) => (typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null);
+  const totalItems = optionalCount(raw.totalItems) ?? 0;
+  return {
+    items: list(raw.items)
+      .map(parseBooking)
+      .filter((b): b is AdminBooking => b !== null),
+    page: optionalCount(raw.page) ?? params.page,
+    pageSize: optionalCount(raw.pageSize) ?? params.pageSize,
+    totalItems,
+    totalPages: Math.max(1, optionalCount(raw.totalPages) ?? 1),
+    counts: {
+      upcoming: optionalCount(counts.upcoming),
+      history: optionalCount(counts.history),
+      cancelled: optionalCount(counts.cancelled),
+    },
+  };
 }
 
 /** GET /facilities — lista facilităților și care dintre ele are culoare (bazinul). */

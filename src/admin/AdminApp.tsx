@@ -3,6 +3,7 @@ import AdminLayout from "./AdminLayout";
 import AdminActivityManagePage from "./pages/AdminActivityManagePage";
 import AdminActivityNewPage from "./pages/AdminActivityNewPage";
 import AdminBlockFacilityPage from "./pages/AdminBlockFacilityPage";
+import AdminBookingsPage from "./pages/AdminBookingsPage";
 import AdminIncidentPage from "./pages/AdminIncidentPage";
 import AdminSchedulePage from "./pages/AdminSchedulePage";
 
@@ -12,12 +13,14 @@ import AdminSchedulePage from "./pages/AdminSchedulePage";
 // DOAR după ce RequireAdmin a confirmat la server rolul de administrator. Astfel,
 // browserul unui student nu descarcă niciodată codul paginilor de administrare.
 //
-// Momentan este implementată secțiunea „Orar și incidente”:
+// Secțiunea „Orar și incidente”:
 //   /admin/orar                    → orarul zilei
 //   /admin/orar/activitate-noua    → „Adaugă activitate USV”
 //   /admin/orar/activitati/:id     → „Gestionează activitatea USV”
 //   /admin/orar/blocare            → „Blocare pentru mentenanță”
 //   /admin/orar/incidente/:id      → „Deblocare anticipată” (detalii, istoric, redeschidere)
+// Secțiunea „Rezervări”:
+//   /admin/rezervari               → lista rezervărilor (file, căutare, filtre)
 // Orice altă adresă /admin/... duce înapoi la orar.
 export default function AdminApp() {
   return (
@@ -28,6 +31,7 @@ export default function AdminApp() {
         <Route path="orar/activitati/:activityId" element={<AdminActivityManagePage />} />
         <Route path="orar/blocare" element={<AdminBlockFacilityPage />} />
         <Route path="orar/incidente/:incidentId" element={<AdminIncidentPage />} />
+        <Route path="rezervari" element={<AdminBookingsPage />} />
         <Route path="*" element={<Navigate to="/admin/orar" replace />} />
       </Route>
     </Routes>

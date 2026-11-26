@@ -948,6 +948,81 @@ function cancelBookingAsAdmin(id: string, raw: unknown) {
   };
 }
 
+/** Elimină diacriticele și literele mari, ca „radu” să găsească „Radu Ionescu”. */
+const normalize = (value: string) => value.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+
+/** Câte zile acoperă implicit fiecare filă, când nu se trimit `from` / `to` (doar în mock). */
+const DEFAULT_SPAN = 13;
+
+/**
+ * GET /admin/bookings — lista rezervărilor, pe file (upcoming / history / cancelled),
+ * cu căutare (`q`: nume sau cod), filtre (facilitate, utilizator, perioadă), paginare
+ * și contoarele pentru file (`counts`).
+ * Fără perioadă, mock-ul folosește un interval implicit în jurul zilei de azi
+ * (backend-ul real caută în toate rezervările).
+ */
+function listBookings(query: URLSearchParams, facilityId: string | null) {
+  const tab = query.get("tab") ?? "upcoming";
+  if (!["upcoming", "history", "cancelled"].includes(tab)) fail(400, "VALIDATION_ERROR", "Filă necunoscută.");
+  const page = Number(query.get("page") ?? 1);
+  const pageSize = Number(query.get("pageSize") ?? 20);
+  if (!Number.isInteger(page) || page < 1 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+    fail(400, "VALIDATION_ERROR", "Paginare invalidă.");
+  }
+  const q = (query.get("q") ?? "").trim();
+  if (q.length > 100) fail(400, "VALIDATION_ERROR", "Textul căutat este prea lung.");
+  const userId = query.get("userId");
+  const fromParam = query.get("from");
+  const toParam = query.get("to");
+  if ((fromParam && !validDate(fromParam)) || (toParam && !validDate(toParam)) || (fromParam && toParam && toParam < fromParam)) {
+    fail(400, "VALIDATION_ERROR", "Interval de date invalid.");
+  }
+
+  const now = Date.now();
+  const day = today();
+  /** Intervalul de zile citit pentru o filă (cel cerut sau cel implicit). */
+  const rangeFor = (t: string) => {
+    const from = fromParam ?? (t === "upcoming" ? day : addDays(day, -DEFAULT_SPAN));
+    const to = toParam ?? (t === "history" ? day : addDays(day, DEFAULT_SPAN));
+    // Limităm intervalul citit, ca mock-ul să nu genereze luni întregi.
+    return { from, to: to > addDays(from, 62) ? addDays(from, 62) : to };
+  };
+  const needle = normalize(q);
+  /** Rezervările unei file, cu toate filtrele aplicate. */
+  const itemsFor = (t: string) => {
+    const { from, to } = rangeFor(t);
+    const all: MockBooking[] = [];
+    for (let d = from; d <= to; d = addDays(d, 1)) all.push(...bookingsOn(d));
+    return all
+      .filter((b) => !facilityId || b.facility.id === facilityId)
+      .filter((b) => !userId || b.user.id === userId)
+      .filter((b) => !needle || normalize(b.user.name).includes(needle) || normalize(b.code).includes(needle))
+      .filter((b) =>
+        t === "cancelled"
+          ? b.status === "cancelled"
+          : b.status !== "cancelled" && (t === "history" ? Date.parse(b.endTime) <= now : Date.parse(b.endTime) > now),
+      )
+      // Viitoare: cele mai apropiate întâi; istoric și anulate: cele mai recente întâi.
+      .sort((a, b) => (t === "upcoming" ? 1 : -1) * a.startTime.localeCompare(b.startTime) || a.id.localeCompare(b.id));
+  };
+
+  const items = itemsFor(tab);
+  const start = (page - 1) * pageSize;
+  return {
+    page,
+    pageSize,
+    totalItems: items.length,
+    totalPages: Math.max(1, Math.ceil(items.length / pageSize)),
+    counts: {
+      upcoming: tab === "upcoming" ? items.length : itemsFor("upcoming").length,
+      history: tab === "history" ? items.length : itemsFor("history").length,
+      cancelled: tab === "cancelled" ? items.length : itemsFor("cancelled").length,
+      waitlist: 0,
+    },
+    items: items.slice(start, start + pageSize),
+  };
+}
+
 export function adminMockHandler(path: string, method: HttpMethod, token: string | null | undefined, body?: unknown) {
   requireAdmin(token);
 
@@ -971,38 +1046,7 @@ export function adminMockHandler(path: string, method: HttpMethod, token: string
     if (bookingRoute[2] && method === "POST") return cancelBookingAsAdmin(bookingRoute[1], body);
   }
 
-  if (route === "/admin/bookings" && method === "GET") {
-    const from = query.get("from") ?? today();
-    const to = query.get("to") ?? from;
-    if (!validDate(from) || !validDate(to) || to < from) fail(400, "VALIDATION_ERROR", "Interval de date invalid.");
-    const tab = query.get("tab") ?? "upcoming";
-    const page = Number(query.get("page") ?? 1);
-    const pageSize = Number(query.get("pageSize") ?? 20);
-    if (!Number.isInteger(page) || page < 1 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
-      fail(400, "VALIDATION_ERROR", "Paginare invalidă.");
-    }
-
-    const now = Date.now();
-    const all: MockBooking[] = [];
-    for (let d = from; d <= to; d = addDays(d, 1)) all.push(...bookingsOn(d));
-    const items = all
-      .filter((b) => !facilityId || b.facility.id === facilityId)
-      .filter((b) =>
-        tab === "cancelled"
-          ? b.status === "cancelled"
-          : b.status !== "cancelled" &&
-            (tab === "history" ? Date.parse(b.endTime) <= now : tab === "upcoming" ? Date.parse(b.endTime) > now : false),
-      );
-    const start = (page - 1) * pageSize;
-    return {
-      page,
-      pageSize,
-      totalItems: items.length,
-      totalPages: Math.ceil(items.length / pageSize),
-      counts: { upcoming: 0, history: 0, cancelled: 0, waitlist: 0 },
-      items: items.slice(start, start + pageSize),
-    };
-  }
+  if (route === "/admin/bookings" && method === "GET") return listBookings(query, facilityId);
 
   if (route === "/admin/activities/preview" && method === "POST") return previewActivity(body);
   if (route === "/admin/activities" && method === "POST") return createActivity(body);

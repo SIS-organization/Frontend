@@ -22,10 +22,10 @@ export type AdminSection = {
 };
 
 // Meniul din stânga, în ordinea din Figma („Administrare · Baza sportivă”).
-// Momentan este implementată doar prima secțiune: „Orar și incidente”.
+// Momentan sunt implementate „Orar și incidente” și „Rezervări”.
 export const adminSections: AdminSection[] = [
   { path: "orar", label: "Orar și incidente", Icon: CalendarRangeIcon, ready: true },
-  { path: "rezervari", label: "Rezervări", Icon: ClipboardListIcon, ready: false },
+  { path: "rezervari", label: "Rezervări", Icon: ClipboardListIcon, ready: true },
   { path: "utilizatori", label: "Utilizatori", Icon: UsersIcon, ready: false },
   { path: "rapoarte", label: "Rapoarte", Icon: ChartIcon, ready: false },
   { path: "jurnal", label: "Jurnal și notificări", Icon: ClipboardListIcon, ready: false },

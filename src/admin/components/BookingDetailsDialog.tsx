@@ -10,18 +10,9 @@ import { useEffect, useState } from "react";
 import { ApiError } from "../../api/client";
 import { getAdminBooking, type BookingDetails, type UserQuota } from "../api";
 import AdminDialog from "./AdminDialog";
-import { BOOKING_STATUS, CANCELLED_BY_LABEL, ROLE_LABEL } from "../bookingText";
+import { BOOKING_STATUS, BOOKING_STATUS_TONE, CANCELLED_BY_LABEL, ROLE_LABEL } from "../bookingText";
 import { bucharestParts, formatClock, formatDayMonth, formatDayMonthYear, formatTimeRange } from "../time";
 
-/** Culoarea etichetei de status. */
-const STATUS_TONE: Record<BookingDetails["status"], string> = {
-  confirmed: "bg-[#e7f2ef] text-primary",
-  in_verification: "bg-[#fdf3e3] text-[#926018]",
-  awaiting_transfer: "bg-[#fdf3e3] text-[#926018]",
-  completed: "bg-bg text-muted",
-  rejected: "bg-[#fcedea] text-[#ac443c]",
-  cancelled: "bg-[#fcedea] text-[#ac443c]",
-};
 
 /** „noiembrie 2026” dintr-o lună „2026-11”. */
 function monthLabel(month: string) {
@@ -105,7 +96,7 @@ export default function BookingDetailsDialog(props: {
         booking && (
           <p className="flex flex-wrap items-center gap-2 text-[13px] text-muted">
             {booking.code}
-            <span className={`rounded-md px-2 py-0.5 text-xs font-semibold ${STATUS_TONE[booking.status]}`}>
+            <span className={`rounded-md px-2 py-0.5 text-xs font-semibold ${BOOKING_STATUS_TONE[booking.status]}`}>
               {BOOKING_STATUS[booking.status]}
             </span>
           </p>
