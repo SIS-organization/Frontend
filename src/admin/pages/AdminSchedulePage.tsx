@@ -7,11 +7,12 @@
 //   GET /admin/bookings  → rezervările zilei (cu numele utilizatorului)
 //   GET /facilities      → doar ca să știm care facilitate are culoare (bazinul)
 //
-// Butoanele pentru acțiuni (adaugă activitate, blochează interval, detalii)
-// sunt afișate ca în Figma, dar inactive: țin de pașii următori.
+// „Adaugă activitate USV” deschide formularul de activitate, cu ziua și
+// facilitatea alese aici deja completate. Celelalte acțiuni (blochează interval,
+// detalii) sunt afișate ca în Figma, dar inactive: țin de pașii următori.
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { ApiError } from "../../api/client";
 import { useAuth } from "../../context/useAuth";
 import { PlusIcon, ChevronDownIcon } from "../AdminIcons";
@@ -235,15 +236,13 @@ export default function AdminSchedulePage() {
             Vezi fiecare rezervare pe interval orar, alături de cursuri și mentenanță.
           </p>
         </div>
-        <button
-          type="button"
-          disabled
-          title={NOT_READY}
-          className="flex h-10 items-center gap-2 rounded-lg border border-[#dde5e2] bg-white px-[18px] text-[13px] font-semibold text-heading disabled:cursor-not-allowed disabled:opacity-60"
+        <Link
+          to={`/admin/orar/activitate-noua?${new URLSearchParams(facilityFilter ? { zi: day, facilitate: facilityFilter } : { zi: day }).toString()}`}
+          className="flex h-10 items-center gap-2 rounded-lg border border-[#dde5e2] bg-white px-[18px] text-[13px] font-semibold text-heading hover:bg-bg"
         >
           Adaugă activitate USV
           <PlusIcon className="size-4" />
-        </button>
+        </Link>
       </div>
 
       {allFacilities.length > 0 && (

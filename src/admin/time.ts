@@ -60,6 +60,25 @@ export function formatTimeRange(startIso: string, endIso: string): string {
 
 export const hourLabel = (hour: number) => `${pad(hour)}:00`;
 
+/** Orele de start posibile într-o zi de program: 08, 09, …, 20. */
+export const START_HOURS = Array.from({ length: DAY_END_HOUR - DAY_START_HOUR }, (_, i) => DAY_START_HOUR + i);
+/** Orele de sfârșit posibile: 09, 10, …, 21. */
+export const END_HOURS = START_HOURS.map((hour) => hour + 1);
+
+/**
+ * Momentul „data, ora:00” în ora României, ca text ISO cu fus orar
+ * (ex. „2026-10-20T19:00:00+03:00”), cum cere contractul (`date-time`).
+ * Fusul se calculează pentru ziua respectivă (vară +03:00, iarnă +02:00).
+ */
+export function bucharestIso(date: string, hour: number): string {
+  const offset =
+    new Intl.DateTimeFormat("en-US", { timeZone: TIMEZONE, timeZoneName: "longOffset" })
+      .formatToParts(new Date(`${date}T12:00:00Z`))
+      .find((part) => part.type === "timeZoneName")
+      ?.value.replace("GMT", "") || "+00:00";
+  return `${date}T${pad(hour)}:00:00${offset}`;
+}
+
 const capitalize = (text: string) => text.charAt(0).toLocaleUpperCase("ro-RO") + text.slice(1);
 
 function asDate(date: string) {

@@ -67,6 +67,8 @@ export type AdminBooking = {
 
 export type FacilityKind = {
   id: string;
+  /** Numele afișat (ex. „Sală de sport”), folosit în formularele de administrare. */
+  name: string;
   /** Bazinul: fiecare culoar se rezervă separat. */
   hasLanes: boolean;
 };
@@ -245,7 +247,7 @@ export async function getAdminBookingsForDay(date: string, facilityId: string | 
   return [...result.values()];
 }
 
-/** GET /facilities — doar ca să știm care facilitate are culoare (bazinul). */
+/** GET /facilities — lista facilităților și care dintre ele are culoare (bazinul). */
 export async function getFacilityKinds(signal?: AbortSignal): Promise<FacilityKind[]> {
   const raw = await apiRequest<unknown>("/facilities?page=1&pageSize=100", "GET", undefined, {}, { signal });
   if (!isObject(raw)) return [];
@@ -256,6 +258,137 @@ export async function getFacilityKinds(signal?: AbortSignal): Promise<FacilityKi
     const codes = [...list(item.sports), ...list(item.amenities)]
       .map((entry) => (isObject(entry) ? entry.code : null))
       .filter((code): code is string => typeof code === "string");
-    return [{ id, hasLanes: codes.includes("swimming") || codes.includes("swim_lanes") }];
+    const name = text(item.name) ?? "Facilitate";
+    return [{ id, name, hasLanes: codes.includes("swimming") || codes.includes("swim_lanes") }];
   });
+}
+
+// ===========================================================================
+// Activități USV (cursuri și evenimente) — /admin/activities
+// ===========================================================================
+
+export type ActivityType = "course" | "event";
+const ACTIVITY_TYPES: readonly ActivityType[] = ["course", "event"];
+
+export const ACTIVITY_TYPE_LABEL: Record<ActivityType, string> = {
+  course: "Curs universitar",
+  event: "Eveniment USV",
+};
+
+/** Corpul pentru creare / editare / previzualizare (`ActivityCreate` din contract). */
+export type ActivityInput = {
+  name: string;
+  type: ActivityType;
+  facilityId: string;
+  organizer: string;
+  startTime: string;
+  endTime: string;
+  recurrence: { frequency: "none" | "weekly"; until: string | null };
+  calendarMessage: string;
+  resolveConflicts?: boolean;
+};
+
+export type Activity = {
+  id: string;
+  code: string | null;
+  name: string;
+  type: ActivityType;
+  facilityId: string;
+  organizer: string;
+  startTime: string;
+  endTime: string;
+  recurrence: { frequency: "none" | "weekly"; until: string | null };
+  calendarMessage: string;
+  status: "published" | "cancelled";
+};
+
+export type AffectedBooking = {
+  id: string;
+  code: string;
+  userName: string | null;
+  userRole: string | null;
+  startTime: string;
+  endTime: string;
+  quotaWillBeRefunded: boolean;
+};
+
+export type ActivityPreview = {
+  available: boolean;
+  affectedBookings: AffectedBooking[];
+  overlappingActivities: Activity[];
+  message: string | null;
+};
+
+function parseRecurrence(raw: unknown): Activity["recurrence"] {
+  if (!isObject(raw)) return { frequency: "none", until: null };
+  const frequency = oneOf(raw.frequency, ["none", "weekly"] as const) ?? "none";
+  return { frequency, until: isValidIsoDate(raw.until) ? raw.until : null };
+}
+
+export function parseActivity(raw: unknown): Activity | null {
+  if (!isObject(raw)) return null;
+  const id = identifier(raw.id);
+  const name = text(raw.name);
+  const type = oneOf(raw.type, ACTIVITY_TYPES);
+  const facilityId = identifier(raw.facilityId);
+  const startTime = dateTime(raw.startTime);
+  const endTime = dateTime(raw.endTime);
+  if (!id || !name || !type || !facilityId || !validInterval(startTime, endTime)) return null;
+  return {
+    id,
+    code: text(raw.code),
+    name,
+    type,
+    facilityId,
+    organizer: text(raw.organizer) ?? "",
+    startTime: startTime!,
+    endTime: endTime!,
+    recurrence: parseRecurrence(raw.recurrence),
+    calendarMessage: text(raw.calendarMessage) ?? "",
+    status: oneOf(raw.status, ["published", "cancelled"] as const) ?? "published",
+  };
+}
+
+/** Rezervare afectată: din `Booking` (activități) sau din lista de impact a incidentelor. */
+function parseAffected(raw: unknown): AffectedBooking | null {
+  if (!isObject(raw)) return null;
+  const id = identifier(raw.bookingId ?? raw.id);
+  const code = text(raw.code);
+  const startTime = dateTime(raw.startTime);
+  const endTime = dateTime(raw.endTime);
+  if (!id || !code || !validInterval(startTime, endTime)) return null;
+  const user = isObject(raw.user) ? raw.user : null;
+  return {
+    id,
+    code,
+    userName: text(raw.userName) ?? (user ? text(user.name) : null),
+    userRole: text(raw.userRole) ?? (user ? text(user.role) : null),
+    startTime: startTime!,
+    endTime: endTime!,
+    quotaWillBeRefunded: raw.quotaWillBeRefunded === true,
+  };
+}
+
+function parseActivityPreview(raw: unknown): ActivityPreview {
+  if (!isObject(raw)) throw new Error("Răspuns invalid la verificarea intervalului.");
+  return {
+    available: raw.available === true,
+    affectedBookings: list(raw.affectedBookings).map(parseAffected).filter((b): b is AffectedBooking => b !== null),
+    overlappingActivities: list(raw.overlappingActivities).map(parseActivity).filter((a): a is Activity => a !== null),
+    message: text(raw.message),
+  };
+}
+
+/** POST /admin/activities/preview — verifică intervalul fără să salveze nimic. */
+export async function previewActivity(input: ActivityInput, signal?: AbortSignal) {
+  return parseActivityPreview(
+    await apiRequest<unknown>("/admin/activities/preview", "POST", input, {}, { signal }),
+  );
+}
+
+/** POST /admin/activities — publică activitatea (201). */
+export async function createActivity(input: ActivityInput) {
+  const activity = parseActivity(await apiRequest<unknown>("/admin/activities", "POST", input));
+  if (!activity) throw new Error("Răspuns invalid la publicarea activității.");
+  return activity;
 }

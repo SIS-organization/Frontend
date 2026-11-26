@@ -69,7 +69,7 @@ export async function apiRequest<T>(
     if (path.startsWith("/admin")) {
       // Mock-ul de administrare verifică și el rolul (401 / 403), ca backend-ul real.
       const adminMock = await import("../mock/adminMock");
-      return unwrap<T>(adminMock.adminMockHandler(path, method, token));
+      return unwrap<T>(adminMock.adminMockHandler(path, method, token, body));
     }
     const mockModule = await import("../mock/apiMock");
     return unwrap<T>(mockModule.mockApiHandler(path, method, body));
