@@ -16,7 +16,7 @@ const login = (token: string): { success: true; data: LoginResponse } => ({
   data: { token, user: sessionsByToken[token] },
 });
 
-export function authMockHandler(path: string, method: "GET" | "POST" | "PATCH", token?: string | null) {
+export function authMockHandler(path: string, method: "GET" | "POST" | "PATCH" | "DELETE", token?: string | null) {
   if (path === "/auth/usv" && method === "POST") {
     return login("mock-token-usv");
   }

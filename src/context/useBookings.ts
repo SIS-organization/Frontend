@@ -1,6 +1,7 @@
 import { createContext, useContext } from "react";
 import type { Booking } from "../types";
 import type { UserQuota } from "../api/bookings";
+import type { WaitlistEntry } from "../api/waitlist";
 
 export type BookingsContextValue = {
   bookings: Booking[];
@@ -9,6 +10,8 @@ export type BookingsContextValue = {
   quota: UserQuota | null;
   quotaError: boolean;
   bookingsError: boolean;
+  waitlist: WaitlistEntry[];
+  leaveWaitlist: (id: string) => Promise<void>;
 };
 
 export const BookingsContext = createContext<BookingsContextValue | null>(null);

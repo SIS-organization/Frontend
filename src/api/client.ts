@@ -46,7 +46,7 @@ function unwrap<T>(payload: unknown): T {
 
 export async function apiRequest<T>(
   path: string,
-  method: "GET" | "POST" | "PATCH" = "GET",
+  method: "GET" | "POST" | "PATCH" | "DELETE" = "GET",
   body?: unknown,
   headers: Record<string, string> = {},
 ): Promise<T> {
@@ -101,5 +101,7 @@ export async function apiRequest<T>(
     throw new ApiError(`Cererea a eșuat (${response.status}).`, response.status);
   }
 
+  // 204 No Content (ex. DELETE /waitlist/{id}) nu are corp.
+  if (response.status === 204) return undefined as T;
   return unwrap<T>(await response.json());
 }

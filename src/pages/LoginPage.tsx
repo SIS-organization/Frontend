@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import Button from "../components/common/Button";
+import campusPhoto from "../assets/login-campus.jpg";
 import { useAuth } from "../context/useAuth";
 import {
   ArrowRightIcon,
@@ -71,9 +72,10 @@ export default function LoginPage() {
       </header>
 
       <main className="flex flex-1 gap-[76px] p-5 md:p-6">
-        {/* Cardul din stânga. Gradientul ține locul fotografiei din campus până la exportul ei din Figma. */}
-        <section className="relative hidden w-[664px] shrink-0 flex-col justify-between overflow-hidden rounded-2xl bg-linear-to-b from-[#a9b8bc] via-[#5f7064] to-[#0e2129] p-12 text-white lg:flex">
-          <div className="absolute inset-0 bg-linear-to-b from-black/5 via-transparent to-black/50" />
+        {/* Cardul din stânga, cu fotografia din campus exportată din designul Figma. */}
+        <section className="relative hidden w-[664px] shrink-0 flex-col justify-between overflow-hidden rounded-2xl bg-sidebar p-12 text-white lg:flex">
+          <img src={campusPhoto} alt="" className="absolute inset-0 size-full object-cover" />
+          <div className="absolute inset-0 bg-linear-to-b from-black/25 via-black/5 to-[#0b202a]/90" />
 
           <div className="relative flex items-center gap-3">
             <span className="grid size-[46px] place-items-center rounded-md border border-white/60 text-base font-bold">
@@ -143,7 +145,7 @@ export default function LoginPage() {
             </Button>
             <p className="mt-5 flex items-center gap-2 text-[11px] text-primary">
               <CircleCheckIcon className="size-4 shrink-0" />
-              Acces prioritar pentru comunitatea USV, cu identitate validată de instituție.
+              Acces prioritar și 4 rezervări incluse pe lună pentru conturile eligibile, validate de instituție.
             </p>
           </div>
 

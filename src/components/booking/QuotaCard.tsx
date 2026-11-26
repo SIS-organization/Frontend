@@ -1,49 +1,60 @@
 import type { UserQuota } from "../../api/bookings";
+import { monthName } from "../../utils/dates";
 
 type Props = {
   quota: UserQuota | null;
   error?: boolean;
 };
 
-// KAN-37: bannerul cu cota lunară (maximum 4 rezervări pe lună).
+const resetLabel = (iso: string) =>
+  new Date(`${iso}T00:00:00`).toLocaleDateString("ro-RO", { day: "numeric", month: "long" });
+
+// KAN-37: cardul cu cota lunară (maximum 4 rezervări incluse pe lună), ca în designul „Programările mele”.
 export default function QuotaCard({ quota, error }: Props) {
   if (error) {
     return (
-      <p role="alert" className="mb-5 max-w-3xl rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
+      <p role="alert" className="rounded-2xl bg-red-50 px-5 py-4 text-sm text-red-700">
         Nu am putut încărca cota lunară. Reîncarcă pagina ca să încerci din nou.
       </p>
     );
   }
 
   if (!quota) {
-    return <div aria-hidden className="mb-5 h-[84px] max-w-3xl animate-pulse rounded-xl bg-gray-200" />;
+    return <div aria-hidden className="h-[272px] animate-pulse rounded-2xl bg-sidebar/80" />;
   }
 
   const { remaining, included, used } = quota;
+  const month = monthName(quota.month);
+  const [year] = quota.month.split("-");
+
   if (remaining === null || included === null) {
     return (
-      <section aria-label="Cota lunară" className="mb-5 max-w-3xl rounded-xl border border-gray-200 bg-white p-4">
-        <p className="font-semibold">Nu se aplică o cotă lunară inclusă acestui cont.</p>
+      <section aria-label="Cota lunară" className="rounded-2xl bg-sidebar p-6 text-white">
+        <p className="text-[11px] uppercase tracking-wide text-white/70">
+          {month} {year}
+        </p>
+        <p className="mt-4 text-lg font-semibold">Fără cotă lunară inclusă</p>
+        <p className="mt-3 text-[13px] leading-relaxed text-white/75">
+          Nu se aplică o cotă lunară inclusă acestui cont.
+        </p>
       </section>
     );
   }
+
   const exhausted = remaining <= 0;
+  const percent = included > 0 ? Math.min(100, (used / included) * 100) : 0;
 
   return (
-    <section
-      aria-label="Cota lunară"
-      className={`mb-5 max-w-3xl rounded-xl border p-4 ${exhausted ? "border-red-200 bg-red-50" : "border-gray-200 bg-white"}`}
-    >
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <p className={`font-semibold ${exhausted ? "text-red-700" : ""}`}>
-          {exhausted
-            ? "Ai atins limita lunară de rezervări"
-            : `Îți ${remaining === 1 ? "mai rămâne o rezervare" : `mai rămân ${remaining} rezervări`} luna aceasta`}
-        </p>
-        <p className="text-sm text-muted">
-          {used} din {included} folosite
-        </p>
-      </div>
+    <section aria-label="Cota lunară" className="rounded-2xl bg-sidebar p-6 text-white">
+      <p className="text-[11px] uppercase tracking-wide text-white/70">
+        {month} {year}
+      </p>
+      <p className="mt-3 flex items-baseline gap-2.5">
+        <span className="text-[44px] leading-none text-lime">
+          {used} din {included}
+        </span>
+        <span className="text-[13px] text-white/75">utilizate</span>
+      </p>
 
       <div
         role="progressbar"
@@ -51,20 +62,23 @@ export default function QuotaCard({ quota, error }: Props) {
         aria-valuemin={0}
         aria-valuemax={included}
         aria-valuenow={used}
-        className="mt-3 flex gap-1.5"
+        className="mt-6 h-1 rounded-full bg-white/15"
       >
-        {Array.from({ length: included }, (_, i) => (
-          <span
-            key={i}
-            className={`h-2 flex-1 rounded-full ${i < used ? (exhausted ? "bg-red-400" : "bg-primary") : "bg-gray-200"}`}
-          />
-        ))}
+        <div className="h-full rounded-full bg-lime" style={{ width: `${percent}%` }} />
       </div>
 
-      {exhausted && (
-        <p className="mt-3 text-sm text-red-700">
-          Poți rezerva din nou luna viitoare sau după ce anulezi o rezervare cu cel puțin 2 ore înainte.
-        </p>
+      <h2 className="mt-6 text-base font-semibold">
+        {exhausted
+          ? "Limita lunară a fost atinsă"
+          : `${remaining === 1 ? "Mai ai o rezervare inclusă" : `Mai ai ${remaining} rezervări incluse`}`}
+      </h2>
+      <p className="mt-3 text-[13px] leading-relaxed text-white/75">
+        {exhausted
+          ? `Nu poți adăuga o nouă rezervare inclusă în ${month}. Poți gestiona rezervările existente.`
+          : `Le poți folosi oricând în ${month}. O anulare cu cel puțin 2 ore înainte restituie ora în cotă.`}
+      </p>
+      {quota.resetsOn && (
+        <p className="mt-4 text-[13px] font-medium text-lime">Următoarea reînnoire: {resetLabel(quota.resetsOn)}</p>
       )}
     </section>
   );

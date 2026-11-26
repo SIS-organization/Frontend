@@ -7,6 +7,7 @@ import {
   type BookingResponse,
   type UserQuota,
 } from "../api/bookings";
+import { getMyWaitlist, leaveWaitlist as leaveWaitlistRequest, type WaitlistEntry } from "../api/waitlist";
 import type { Booking } from "../types";
 import { BookingsContext, type BookingsContextValue } from "./useBookings";
 
@@ -41,6 +42,9 @@ function toLocalBooking(booking: BookingResponse): Booking {
     hour,
     status,
     code: booking.code,
+    campus: booking.facility.campus,
+    usesIncludedQuota: booking.usesIncludedQuota,
+    createdAt: booking.createdAt,
   };
 }
 
@@ -49,6 +53,7 @@ export function BookingsProvider({ children }: { children: ReactNode }) {
   const [quota, setQuota] = useState<UserQuota | null>(null);
   const [quotaError, setQuotaError] = useState(false);
   const [bookingsError, setBookingsError] = useState(false);
+  const [waitlist, setWaitlist] = useState<WaitlistEntry[]>([]);
 
   const refreshQuota = useCallback(async () => {
     try {
@@ -71,6 +76,12 @@ export function BookingsProvider({ children }: { children: ReactNode }) {
       .catch(() => {
         if (active) setBookingsError(true);
       });
+    // Lista de așteptare e opțională în pagină: dacă nu se încarcă, cardul nu apare.
+    getMyWaitlist()
+      .then((entries) => {
+        if (active) setWaitlist(entries.filter((entry) => entry.status === "active" || entry.status === "offered"));
+      })
+      .catch(() => undefined);
     getUserQuota()
       .then((result) => {
         if (active) {
@@ -104,6 +115,11 @@ export function BookingsProvider({ children }: { children: ReactNode }) {
     );
   };
 
+  const leaveWaitlist = async (id: string) => {
+    await leaveWaitlistRequest(id);
+    setWaitlist((current) => current.filter((entry) => entry.id !== id));
+  };
+
   return (
     <BookingsContext.Provider
       value={
@@ -114,6 +130,8 @@ export function BookingsProvider({ children }: { children: ReactNode }) {
           quota,
           quotaError,
           bookingsError,
+          waitlist,
+          leaveWaitlist,
         } satisfies BookingsContextValue
       }
     >

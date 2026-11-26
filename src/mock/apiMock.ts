@@ -258,18 +258,25 @@ function listFacilities(path: string): FacilityListResponse {
   };
 }
 
-export function mockApiHandler(path: string, method: "GET" | "POST" | "PATCH", body?: unknown) {
+export function mockApiHandler(path: string, method: "GET" | "POST" | "PATCH" | "DELETE", body?: unknown) {
+  const waitlistResult = mockWaitlistHandler(path, method);
+  if (waitlistResult !== undefined) return waitlistResult;
+
   if (path.startsWith("/users/me/quota") && method === "GET") {
+    // Ca în designul „Programările mele”: toate cele 4 rezervări incluse sunt folosite.
+    const month = dateInBucharest().slice(0, 7);
+    const [year, monthNumber] = month.split("-").map(Number);
+    const resetsOn = new Date(Date.UTC(year, monthNumber, 1)).toISOString().slice(0, 10);
     return {
       success: true,
       data: {
-        month: "2026-11",
+        month,
         included: 4,
-        used: 2,
-        remaining: 2,
-        resetsOn: "2026-12-01",
-        priority: false,
-        limitReached: false,
+        used: 4,
+        remaining: 0,
+        resetsOn,
+        priority: true,
+        limitReached: true,
         appliesTo: "student",
       },
     };
@@ -387,4 +394,66 @@ export function mockApiHandler(path: string, method: "GET" | "POST" | "PATCH", b
   }
 
   throw new Error(`No mock defined for ${method} ${path}`);
+}
+
+// ---------- Date demo pentru „Programările mele” (doar în modul mock) ----------
+// Reproduc situația din designul Figma: o rezervare azi (în desfășurare, deci se poate elibera
+// anticipat), una mâine la bazin, două finalizate în istoric și o intrare pe lista de așteptare.
+function shiftDate(iso: string, days: number) {
+  const [year, month, day] = iso.split("-").map(Number);
+  const shifted = new Date(Date.UTC(year, month - 1, day + days));
+  return shifted.toISOString().slice(0, 10);
+}
+
+function seedBooking(id: string, code: string, facilityId: number, date: string, hour: number, status: BookingResponse["status"]) {
+  const apiId = facilityIds[facilityId];
+  const facility = findFacility(apiId);
+  mockBookings.push({
+    id,
+    code,
+    facility: { id: apiId, name: facility.name, campus: "Campus USV" },
+    startTime: dateTimeInBucharest(date, hour),
+    endTime: dateTimeInBucharest(date, hour + 1),
+    durationMinutes: 60,
+    status,
+    usesIncludedQuota: true,
+    createdAt: status === "confirmed" && date === dateInBucharest() ? new Date().toISOString() : dateTimeInBucharest(shiftDate(date, -3), 10),
+  });
+}
+
+const demoToday = dateInBucharest();
+const demoHour = Math.min(
+  20,
+  Math.max(8, Number(new Intl.DateTimeFormat("en-GB", { timeZone: timezone, hour: "2-digit", hourCycle: "h23" }).format(new Date()))),
+);
+seedBooking("demo-1", `USV-${demoToday.slice(5, 7)}${demoToday.slice(8)}-184`, 2, demoToday, demoHour, "confirmed");
+seedBooking("demo-2", `USV-${shiftDate(demoToday, 1).slice(5).replace("-", "")}-201`, 3, shiftDate(demoToday, 1), 16, "confirmed");
+seedBooking("demo-3", "USV-HIST-1", 1, shiftDate(demoToday, -7), 19, "completed");
+seedBooking("demo-4", "USV-HIST-2", 2, shiftDate(demoToday, -14), 18, "completed");
+
+const mockWaitlist = [
+  {
+    id: "wait-1",
+    facility: { id: facilityIds[2], name: findFacility(facilityIds[2]).name },
+    startTime: dateTimeInBucharest(shiftDate(demoToday, 1), 15),
+    endTime: dateTimeInBucharest(shiftDate(demoToday, 1), 16),
+    position: 2,
+    status: "active",
+    replaceBookingId: "demo-2",
+    offerExpiresAt: null,
+    createdAt: new Date().toISOString(),
+  },
+];
+
+export function mockWaitlistHandler(path: string, method: string) {
+  if (path === "/waitlist" && method === "GET") {
+    return { success: true, data: mockWaitlist.filter((entry) => entry.status === "active" || entry.status === "offered") };
+  }
+  const leaveMatch = path.match(/^\/waitlist\/([^/]+)$/);
+  if (leaveMatch && method === "DELETE") {
+    const entry = mockWaitlist.find((item) => item.id === leaveMatch[1]);
+    if (entry) entry.status = "cancelled";
+    return { success: true, data: undefined };
+  }
+  return undefined;
 }

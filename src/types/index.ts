@@ -17,4 +17,7 @@ export type Booking = {
   hour: number; // ora de start, slot de 60 min
   status: BookingStatus;
   code: string;
+  campus?: string;
+  usesIncludedQuota?: boolean;
+  createdAt?: string;
 };

@@ -13,3 +13,14 @@ export function weekDays(offset: number): Date[] {
 
 export const formatDate = (iso: string) =>
   new Date(iso + "T00:00:00").toLocaleDateString("ro-RO", { weekday: "long", day: "numeric", month: "long" });
+
+const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+
+// „Joi, 26 noiembrie 2026” (bara de sus).
+export const longDate = (d: Date) =>
+  capitalize(d.toLocaleDateString("ro-RO", { weekday: "long", day: "numeric", month: "long", year: "numeric" }));
+
+// „noiembrie” din „2026-11”.
+export const monthName = (month: string) =>
+  new Date(`${month}-01T00:00:00`).toLocaleDateString("ro-RO", { month: "long" });
+
