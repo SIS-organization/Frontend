@@ -1,6 +1,6 @@
 // Texte comune pentru rezervări (orar, pagina Rezervări, fereastra de detalii, pagina de blocare).
 
-import type { BookingStatus, CancelledBy } from "./api";
+import type { BookingStatus, CancelledBy, WaitlistStatus } from "./api";
 
 /** Statusul rezervării, cum îl vede administratorul. */
 export const BOOKING_STATUS: Record<BookingStatus, string> = {
@@ -38,3 +38,14 @@ export const CANCELLED_BY_LABEL: Record<CancelledBy, string> = {
   university_activity: "pentru o activitate USV",
   system: "automat de sistem",
 };
+
+/** Starea unei înscrieri pe lista de așteptare și culoarea etichetei. */
+export const WAITLIST_STATUS: Record<WaitlistStatus, { label: string; tone: string }> = {
+  active: { label: "În așteptare", tone: "bg-[#eef3f1] text-heading" },
+  offered: { label: "Ofertă trimisă", tone: "bg-[#fdf3e3] text-[#926018]" },
+  fulfilled: { label: "Onorată", tone: "bg-[#e7f2ef] text-primary" },
+  declined: { label: "Refuzată", tone: "bg-bg text-muted" },
+  expired: { label: "Expirată", tone: "bg-bg text-muted" },
+  cancelled: { label: "Retrasă", tone: "bg-bg text-muted" },
+};
+

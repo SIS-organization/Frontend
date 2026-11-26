@@ -1,6 +1,7 @@
 // Mock pentru rutele /admin/* din contract:
 //   GET  /admin/schedule, GET /admin/bookings, GET /admin/bookings/{bookingId}
 //   POST /admin/bookings/{bookingId}/cancel
+//   GET  /admin/waitlist, GET /admin/bookings/export (CSV)
 //   POST /admin/activities/preview, POST /admin/activities
 //   GET / PUT / DELETE /admin/activities/{activityId}
 //   GET /admin/incidents, POST /admin/incidents/preview, POST /admin/incidents
@@ -136,6 +137,22 @@ type MockIncident = {
 const activities = new Map<string, MockActivity>();
 const incidents = new Map<string, MockIncident>();
 const bookings = new Map<string, MockBooking>();
+
+/** O înscriere pe lista de așteptare (WaitlistEntry din contract). */
+type MockWaitlistEntry = {
+  id: string;
+  facilityId: string;
+  user: { id: string; name: string };
+  startTime: string;
+  endTime: string;
+  position: number;
+  status: "active" | "offered" | "fulfilled" | "declined" | "expired" | "cancelled";
+  /** Mutare: rezervarea care ar fi înlocuită dacă oferta e acceptată. */
+  replaceBookingId: string | null;
+  offerExpiresAt: string | null;
+  createdAt: string;
+};
+const waitlist = new Map<string, MockWaitlistEntry>();
 const seededDays = new Set<string>();
 let activityCounter = 120;
 let incidentCounter = 300;
@@ -145,6 +162,7 @@ function ensureDay(date: string) {
   if (seededDays.has(date)) return;
   seededDays.add(date);
   for (const booking of seedBookings(date)) bookings.set(booking.id, booking);
+  for (const entry of seedWaitlist(date)) waitlist.set(entry.id, entry);
   templateFor(date)
     .filter((e) => e.blockType === "maintenance" || e.blockType === "repair")
     .forEach((e, index) => {
@@ -843,6 +861,33 @@ const ROLE_OF: Record<string, string> = { "Elena Rusu": "professor", "Vlad Cioba
 
 type MockBooking = ReturnType<typeof seedBookings>[number];
 
+/**
+ * Lista de așteptare a unei zile: intervalele ocupate de la fitness (18:00 și 19:00).
+ * Andrei are deja 18:00 și așteaptă 19:00 (mutare); intervalele trecute au expirat.
+ */
+function seedWaitlist(date: string): MockWaitlistEntry[] {
+  const rows: Array<[number, string, string, number, string | null]> = [
+    [18, "u-7", "Maria Enache", 1, null],
+    [18, "u-8", "Ioana Pavel", 2, null],
+    [19, "u-1", "Andrei Munteanu", 1, `b-${date}-1`],
+  ];
+  return rows.map(([hour, userId, name, position, replaceBookingId], index) => {
+    const endTime = at(date, hour + 1);
+    return {
+      id: `w-${date}-${index + 1}`,
+      facilityId: FITNESS,
+      user: { id: userId, name },
+      startTime: at(date, hour),
+      endTime,
+      position,
+      status: Date.parse(endTime) <= Date.now() ? "expired" : "active",
+      replaceBookingId,
+      offerExpiresAt: null,
+      createdAt: new Date(Math.min(Date.parse(at(date, hour)) - 2 * 86_400_000, Date.now() - 3_600_000)).toISOString(),
+    };
+  });
+}
+
 /** Rezervările inițiale ale unei zile (aceleași la fiecare pornire). */
 function seedBookings(date: string) {
   const slots: Array<[string, number, string]> = [
@@ -951,11 +996,18 @@ function cancelBookingAsAdmin(id: string, raw: unknown) {
   booking.cancelReason = reason;
   booking.cancelledAt = new Date().toISOString();
   booking.quotaRefunded = booking.usesIncludedQuota;
+  // Locul eliberat se oferă primei persoane din coada acelui interval (30 de minute ca să răspundă).
+  const next = [...waitlist.values()]
+    .filter((w) => w.facilityId === booking.facility.id && w.startTime === booking.startTime && w.status === "active")
+    .sort((a, b) => a.position - b.position)[0];
+  if (next) {
+    next.status = "offered";
+    next.offerExpiresAt = new Date(Date.now() + 30 * 60_000).toISOString();
+  }
   return {
     booking,
     quotaRestored: booking.quotaRefunded,
-    // În mock: o persoană de pe lista de așteptare e anunțată că s-a eliberat locul.
-    waitlistNotified: 1,
+    waitlistNotified: next ? 1 : 0,
   };
 }
 
@@ -1041,9 +1093,124 @@ function listBookings(query: URLSearchParams, facilityId: string | null) {
       upcoming: tab === "upcoming" ? items.length : itemsFor("upcoming").length,
       history: tab === "history" ? items.length : itemsFor("history").length,
       cancelled: tab === "cancelled" ? items.length : itemsFor("cancelled").length,
-      waitlist: 0,
+      // Contorul listei de așteptare folosește aceleași filtre (fără filă).
+      waitlist: waitlistFor(query, facilityId).length,
     },
     items: items.slice(start, start + pageSize).map((b) => ({ ...b, status: shownStatus(b, now) })),
+  };
+}
+
+/** Facilitatea unei înscrieri, în forma din contract. */
+function waitlistJson(w: MockWaitlistEntry) {
+  return {
+    id: w.id,
+    facility: { id: w.facilityId, name: facilityName(w.facilityId) },
+    user: w.user,
+    startTime: w.startTime,
+    endTime: w.endTime,
+    position: w.position,
+    status: w.status,
+    replaceBookingId: w.replaceBookingId,
+    offerExpiresAt: w.offerExpiresAt,
+    createdAt: w.createdAt,
+  };
+}
+
+/**
+ * Înscrierile care corespund filtrelor (q = nume, facilitate, perioadă). Fără perioadă,
+ * mock-ul folosește azi + următoarele 13 zile (backend-ul real caută peste tot).
+ */
+function waitlistFor(query: URLSearchParams, facilityId: string | null) {
+  const day = today();
+  const fromParam = query.get("from");
+  const toParam = query.get("to");
+  if ((fromParam && !validDate(fromParam)) || (toParam && !validDate(toParam)) || (fromParam && toParam && toParam < fromParam)) {
+    fail(400, "VALIDATION_ERROR", "Interval de date invalid.");
+  }
+  const from = fromParam ?? day;
+  const toRaw = toParam ?? addDays(day, DEFAULT_SPAN);
+  const to = toRaw > addDays(from, 62) ? addDays(from, 62) : toRaw;
+  for (let d = from; d <= to; d = addDays(d, 1)) ensureDay(d);
+  const needle = normalize((query.get("q") ?? "").trim());
+  return [...waitlist.values()]
+    .filter((w) => w.startTime.slice(0, 10) >= from && w.startTime.slice(0, 10) <= to)
+    .filter((w) => !facilityId || w.facilityId === facilityId)
+    .filter((w) => !needle || normalize(w.user.name).includes(needle))
+    // În ordinea intervalului, apoi a poziției în coadă.
+    .sort((a, b) => a.startTime.localeCompare(b.startTime) || a.position - b.position);
+}
+
+/** GET /admin/waitlist — lista de așteptare (vedere administrator), paginată. */
+function listWaitlist(query: URLSearchParams, facilityId: string | null) {
+  const page = Number(query.get("page") ?? 1);
+  const pageSize = Number(query.get("pageSize") ?? 20);
+  if (!Number.isInteger(page) || page < 1 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+    fail(400, "VALIDATION_ERROR", "Paginare invalidă.");
+  }
+  if ((query.get("q") ?? "").length > 100) fail(400, "VALIDATION_ERROR", "Textul căutat este prea lung.");
+  const items = waitlistFor(query, facilityId);
+  const start = (page - 1) * pageSize;
+  return {
+    page,
+    pageSize,
+    totalItems: items.length,
+    totalPages: Math.max(1, Math.ceil(items.length / pageSize)),
+    items: items.slice(start, start + pageSize).map(waitlistJson),
+  };
+}
+
+/**
+ * O celulă CSV sigură: ghilimelele se dublează, iar textele care încep cu = + - @
+ * primesc un apostrof în față, ca Excel să nu le execute ca formule (CSV injection).
+ */
+function csvCell(value: unknown) {
+  let text = value === null || value === undefined ? "" : String(value);
+  if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`;
+  return `"${text.replaceAll('"', '""')}"`;
+}
+
+const STATUS_RO: Record<string, string> = {
+  in_verification: "În verificare",
+  confirmed: "Confirmată",
+  awaiting_transfer: "În așteptarea transferului",
+  completed: "Finalizată",
+  rejected: "Respinsă",
+  cancelled: "Anulată",
+};
+
+/**
+ * GET /admin/bookings/export — fișierul CSV al unei file (tab, perioadă, facilitate).
+ * Contractul nu are căutare (`q`) la export. Mock-ul generează doar CSV.
+ */
+function exportBookings(query: URLSearchParams, facilityId: string | null) {
+  const format = query.get("format") ?? "csv";
+  if (format !== "csv" && format !== "xlsx") fail(400, "VALIDATION_ERROR", "Format necunoscut.");
+  if (format === "xlsx") fail(400, "VALIDATION_ERROR", "Mock-ul generează doar fișiere CSV.");
+  const tab = query.get("tab") ?? "upcoming";
+  const rows: Array<Record<string, unknown>> = [];
+  for (let page = 1; page <= 50; page += 1) {
+    const pageQuery = new URLSearchParams({ tab, page: String(page), pageSize: "100" });
+    for (const key of ["from", "to"]) {
+      const value = query.get(key);
+      if (value) pageQuery.set(key, value);
+    }
+    const result = listBookings(pageQuery, facilityId);
+    rows.push(...(result.items as Array<Record<string, unknown>>));
+    if (page >= result.totalPages) break;
+  }
+  const header = ["Cod", "Persoană", "Rol", "Facilitate", "Început", "Sfârșit", "Status", "Anulată de", "Motiv anulare"];
+  const lines = rows.map((b) => {
+    const user = b.user as { name: string; role: string };
+    const facility = b.facility as { name: string };
+    return [b.code, user.name, user.role, facility.name, b.startTime, b.endTime, STATUS_RO[String(b.status)] ?? b.status, b.cancelledBy, b.cancelReason]
+      .map(csvCell)
+      .join(";");
+  });
+  return {
+    // BOM-ul (U+FEFF) face ca Excel să citească corect diacriticele.
+    content: `\uFEFF${[header.map(csvCell).join(";"), ...lines].join("\r\n")}`,
+    filename: `rezervari-${tab}-${today()}.csv`,
+    type: "text/csv;charset=utf-8",
   };
 }
 
@@ -1071,6 +1238,8 @@ export function adminMockHandler(path: string, method: HttpMethod, token: string
   }
 
   if (route === "/admin/bookings" && method === "GET") return listBookings(query, facilityId);
+  if (route === "/admin/bookings/export" && method === "GET") return exportBookings(query, facilityId);
+  if (route === "/admin/waitlist" && method === "GET") return listWaitlist(query, facilityId);
 
   if (route === "/admin/activities/preview" && method === "POST") return previewActivity(body);
   if (route === "/admin/activities" && method === "POST") return createActivity(body);

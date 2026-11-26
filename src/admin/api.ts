@@ -6,7 +6,7 @@
 // cu tipurile și valorile permise. Datele incomplete sau neașteptate sunt
 // ignorate, ca un răspuns greșit (sau modificat) să nu poată strica interfața.
 
-import { apiRequest } from "../api/client";
+import { apiDownload, apiRequest } from "../api/client";
 import { isValidIsoDate } from "./time";
 
 export type FacilityStatus = "operational" | "under_maintenance" | "university_activity" | "closed";
@@ -289,7 +289,8 @@ export type BookingsPage = {
   pageSize: number;
   totalItems: number;
   totalPages: number;
-  counts: Record<BookingsTab, number | null>;
+  /** Contoarele filelor, inclusiv lista de așteptare (null = serverul nu l-a trimis). */
+  counts: Record<BookingsTab | "waitlist", number | null>;
 };
 
 /** Lungimea maximă a textului căutat (nu trimitem la server texte uriașe). */
@@ -300,22 +301,11 @@ export const SEARCH_MAX = 100;
  * Parametrii sunt verificați înainte de a ajunge în adresă; răspunsul e validat.
  */
 export async function getAdminBookingsPage(params: BookingsQuery, signal?: AbortSignal): Promise<BookingsPage> {
-  const query = new URLSearchParams({ tab: params.tab, page: String(params.page), pageSize: String(params.pageSize) });
   if (!Number.isInteger(params.page) || params.page < 1) throw new Error("Pagină invalidă.");
-  const q = params.q?.trim() ?? "";
-  if (q) query.set("q", q.slice(0, SEARCH_MAX));
-  if (params.facilityId) {
-    if (!identifier(params.facilityId)) throw new Error("Facilitate invalidă.");
-    query.set("facilityId", params.facilityId);
-  }
-  if (params.from) {
-    requireDate(params.from);
-    query.set("from", params.from);
-  }
-  if (params.to) {
-    requireDate(params.to);
-    query.set("to", params.to);
-  }
+  const query = filterParams(params);
+  query.set("tab", params.tab);
+  query.set("page", String(params.page));
+  query.set("pageSize", String(params.pageSize));
 
   const raw = await apiRequest<unknown>(`/admin/bookings?${query.toString()}`, "GET", undefined, {}, { signal });
   if (!isObject(raw)) throw new Error("Răspuns invalid pentru rezervări.");
@@ -334,6 +324,7 @@ export async function getAdminBookingsPage(params: BookingsQuery, signal?: Abort
       upcoming: optionalCount(counts.upcoming),
       history: optionalCount(counts.history),
       cancelled: optionalCount(counts.cancelled),
+      waitlist: optionalCount(counts.waitlist),
     },
   };
 }
@@ -796,5 +787,137 @@ export async function cancelAdminBooking(id: string, reason: string): Promise<Ca
   const raw = await apiRequest<unknown>(`/admin/bookings/${idPath(id)}/cancel`, "POST", { reason: trimmed });
   if (!isObject(raw)) throw new Error("Răspuns invalid la anularea rezervării.");
   return { quotaRestored: raw.quotaRestored === true, waitlistNotified: count(raw.waitlistNotified) };
+}
+
+// ===========================================================================
+// Lista de așteptare (vedere administrator) — GET /admin/waitlist
+// ===========================================================================
+
+/** Starea unei înscrieri (`WaitlistStatus` din contract). */
+export type WaitlistStatus = "active" | "offered" | "fulfilled" | "declined" | "expired" | "cancelled";
+const WAITLIST_STATUSES: readonly WaitlistStatus[] = ["active", "offered", "fulfilled", "declined", "expired", "cancelled"];
+
+/** O înscriere pe lista de așteptare, cu valorile verificate. */
+export type WaitlistItem = {
+  id: string;
+  facilityId: string | null;
+  facilityName: string;
+  userName: string | null;
+  startTime: string;
+  endTime: string;
+  /** Poziția în coada intervalului (1 = următorul care primește oferta). */
+  position: number | null;
+  status: WaitlistStatus;
+  /** Mutare: rezervarea care ar fi înlocuită dacă oferta e acceptată (altfel null). */
+  replaceBookingId: string | null;
+  offerExpiresAt: string | null;
+  createdAt: string | null;
+};
+
+export type WaitlistPage = {
+  items: WaitlistItem[];
+  page: number;
+  pageSize: number;
+  totalItems: number;
+  totalPages: number;
+};
+
+function parseWaitlistItem(raw: unknown): WaitlistItem | null {
+  if (!isObject(raw)) return null;
+  const id = identifier(raw.id);
+  const startTime = dateTime(raw.startTime);
+  const endTime = dateTime(raw.endTime);
+  const status = oneOf(raw.status, WAITLIST_STATUSES);
+  if (!id || !status || !validInterval(startTime, endTime)) return null;
+  const facility = isObject(raw.facility) ? raw.facility : null;
+  const position = typeof raw.position === "number" && Number.isInteger(raw.position) && raw.position >= 1 ? raw.position : null;
+  return {
+    id,
+    facilityId: facility ? identifier(facility.id) : null,
+    facilityName: (facility && text(facility.name)) ?? "Facilitate",
+    userName: isObject(raw.user) ? text(raw.user.name) : null,
+    startTime: startTime!,
+    endTime: endTime!,
+    position,
+    status,
+    replaceBookingId: identifier(raw.replaceBookingId),
+    offerExpiresAt: dateTime(raw.offerExpiresAt),
+    createdAt: dateTime(raw.createdAt),
+  };
+}
+
+/** Filtrele listei de așteptare (aceleași ca la rezervări, fără filă). */
+export type WaitlistQuery = Omit<BookingsQuery, "tab">;
+
+/** Parametrii comuni (q, facilitate, perioadă), verificați înainte de a ajunge în adresă. */
+function filterParams(params: { q?: string; facilityId?: string | null; from?: string | null; to?: string | null }) {
+  const query = new URLSearchParams();
+  const q = params.q?.trim() ?? "";
+  if (q) query.set("q", q.slice(0, SEARCH_MAX));
+  if (params.facilityId) {
+    if (!identifier(params.facilityId)) throw new Error("Facilitate invalidă.");
+    query.set("facilityId", params.facilityId);
+  }
+  if (params.from) {
+    requireDate(params.from);
+    query.set("from", params.from);
+  }
+  if (params.to) {
+    requireDate(params.to);
+    query.set("to", params.to);
+  }
+  return query;
+}
+
+/** GET /admin/waitlist — o pagină din lista de așteptare. */
+export async function getAdminWaitlistPage(params: WaitlistQuery, signal?: AbortSignal): Promise<WaitlistPage> {
+  if (!Number.isInteger(params.page) || params.page < 1) throw new Error("Pagină invalidă.");
+  const query = filterParams(params);
+  query.set("page", String(params.page));
+  query.set("pageSize", String(params.pageSize));
+  const raw = await apiRequest<unknown>(`/admin/waitlist?${query.toString()}`, "GET", undefined, {}, { signal });
+  if (!isObject(raw)) throw new Error("Răspuns invalid pentru lista de așteptare.");
+  const totalItems = count(raw.totalItems);
+  return {
+    items: list(raw.items)
+      .map(parseWaitlistItem)
+      .filter((w): w is WaitlistItem => w !== null),
+    page: count(raw.page) || params.page,
+    pageSize: count(raw.pageSize) || params.pageSize,
+    totalItems,
+    totalPages: Math.max(1, count(raw.totalPages)),
+  };
+}
+
+// ===========================================================================
+// Exporturi
+// ===========================================================================
+
+/**
+ * GET /admin/bookings/export — fișierul CSV al unei file (Viitoare / Istoric / Anulate),
+ * cu perioada și facilitatea alese. Contractul nu are căutare (`q`) la export.
+ */
+export async function exportBookings(params: { tab: BookingsTab; facilityId?: string | null; from?: string | null; to?: string | null }) {
+  const query = filterParams(params);
+  query.set("tab", params.tab);
+  query.set("format", "csv");
+  return apiDownload(`/admin/bookings/export?${query.toString()}`);
+}
+
+/** Câte înscrieri pune cel mult în fișierul listei de așteptare (50 de pagini × 100). */
+const WAITLIST_EXPORT_PAGES = 50;
+
+/**
+ * Lista de așteptare nu are export pe server, așa că o citim pagină cu pagină
+ * (cu toate filtrele, inclusiv căutarea) și o întoarcem completă, pentru CSV.
+ */
+export async function getAllWaitlist(params: Omit<WaitlistQuery, "page" | "pageSize">) {
+  const all: WaitlistItem[] = [];
+  for (let page = 1; page <= WAITLIST_EXPORT_PAGES; page += 1) {
+    const result = await getAdminWaitlistPage({ ...params, page, pageSize: 100 });
+    all.push(...result.items);
+    if (page >= result.totalPages) break;
+  }
+  return all;
 }
 

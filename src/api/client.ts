@@ -91,35 +91,79 @@ export async function apiRequest<T>(
     signal: options.signal,
   });
 
-  if (!response.ok) {
-    const responseBody = await response.text();
-    let problem: unknown;
-    if (responseBody) {
-      try {
-        problem = JSON.parse(responseBody);
-      } catch {
-        problem = responseBody;
-      }
-    }
-
-    if (typeof problem === "string" && problem.trim()) {
-      throw new ApiError(problem, response.status);
-    }
-
-    if (problem && typeof problem === "object") {
-      const details = problem as { detail?: unknown; title?: unknown; code?: unknown };
-      const message =
-        (typeof details.detail === "string" && details.detail) ||
-        (typeof details.title === "string" && details.title) ||
-        `Cererea a eșuat (${response.status}).`;
-      throw new ApiError(message, response.status, typeof details.code === "string" ? details.code : undefined);
-    }
-
-    throw new ApiError(`Cererea a eșuat (${response.status}).`, response.status);
-  }
+  if (!response.ok) throw await errorFromResponse(response);
 
   // 204 No Content (ex. DELETE): nu există corp de citit.
   if (response.status === 204) return undefined as T;
 
   return unwrap<T>(await response.json());
-}
+}
+
+/** Transformă un răspuns de eroare (RFC 7807 sau text) într-un ApiError cu mesaj clar. */
+async function errorFromResponse(response: Response): Promise<ApiError> {
+  const responseBody = await response.text();
+  let problem: unknown;
+  if (responseBody) {
+    try {
+      problem = JSON.parse(responseBody);
+    } catch {
+      problem = responseBody;
+    }
+  }
+
+  if (typeof problem === "string" && problem.trim()) {
+    return new ApiError(problem, response.status);
+  }
+
+  if (problem && typeof problem === "object") {
+    const details = problem as { detail?: unknown; title?: unknown; code?: unknown };
+    const message =
+      (typeof details.detail === "string" && details.detail) ||
+      (typeof details.title === "string" && details.title) ||
+      `Cererea a eșuat (${response.status}).`;
+    return new ApiError(message, response.status, typeof details.code === "string" ? details.code : undefined);
+  }
+
+  return new ApiError(`Cererea a eșuat (${response.status}).`, response.status);
+}
+
+/** Un fișier descărcat de la server (ex. exportul CSV al rezervărilor). */
+export type DownloadedFile = {
+  blob: Blob;
+  /** Numele propus de server (Content-Disposition), dacă există. */
+  filename: string | null;
+};
+
+/**
+ * GET pentru un fișier (export). Folosește aceeași autentificare și aceleași mesaje
+ * de eroare ca `apiRequest`, dar întoarce conținutul ca Blob, nu ca JSON.
+ * În modul mock, fișierul e generat de mock-ul de administrare.
+ */
+export async function apiDownload(path: string, options: RequestOptions = {}): Promise<DownloadedFile> {
+  const useMock = !import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_USE_MOCK_API === "true";
+  const token = getAuthToken();
+
+  if (useMock) {
+    await delay();
+    const adminMock = await import("../mock/adminMock");
+    const file: unknown = adminMock.adminMockHandler(path, "GET", token, undefined);
+    if (!file || typeof file !== "object" || !("content" in file) || typeof file.content !== "string") {
+      throw new ApiError("Răspuns invalid pentru export.", 500);
+    }
+    const typed = file as { content: string; filename?: string; type?: string };
+    return { blob: new Blob([typed.content], { type: typed.type ?? "text/csv" }), filename: typed.filename ?? null };
+  }
+
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: "GET",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    signal: options.signal,
+  });
+  if (!response.ok) throw await errorFromResponse(response);
+
+  // Content-Disposition: attachment; filename="rezervari.csv"
+  const disposition = response.headers.get("Content-Disposition") ?? "";
+  const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition);
+  return { blob: await response.blob(), filename: match ? decodeURIComponent(match[1]) : null };
+}
+
