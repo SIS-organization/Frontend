@@ -56,12 +56,12 @@ type PageTab = BookingsTab | "waitlist";
 
 /**
  * Filele paginii. `param` = valoarea din adresă (?fila=); `title` = titlul paginii pe filă
- * (ca în Figma, lista de așteptare are titlul ei); `empty` = textul când lista e goală.
+ * (ca în Figma, fiecare filă are titlul ei); `empty` = textul când lista e goală.
  */
 const TABS: { value: PageTab; param: string | null; label: string; title: string; empty: string }[] = [
   { value: "upcoming", param: null, label: "Viitoare", title: "Rezervări", empty: "rezervări viitoare" },
-  { value: "history", param: "istoric", label: "Istoric", title: "Rezervări", empty: "rezervări încheiate" },
-  { value: "cancelled", param: "anulate", label: "Anulate", title: "Rezervări", empty: "rezervări anulate" },
+  { value: "history", param: "istoric", label: "Istoric", title: "Istoricul rezervărilor", empty: "rezervări încheiate" },
+  { value: "cancelled", param: "anulate", label: "Anulate", title: "Rezervări anulate", empty: "rezervări anulate" },
   { value: "waitlist", param: "asteptare", label: "Lista de așteptare", title: "Lista de așteptare", empty: "înscrieri pe lista de așteptare" },
 ];
 
