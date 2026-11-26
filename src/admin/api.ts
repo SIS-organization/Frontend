@@ -625,3 +625,68 @@ export async function reopenIncident(id: string, reopenFrom: string) {
   return incident;
 }
 
+// ===========================================================================
+// Detaliile unei rezervări (vederea de administrator) — /admin/bookings/{id}
+// ===========================================================================
+
+/** Cine a anulat o rezervare (`CancelledBy` din contract). */
+export type CancelledBy = "user" | "administrator" | "maintenance" | "university_activity" | "system";
+const CANCELLED_BY: readonly CancelledBy[] = ["user", "administrator", "maintenance", "university_activity", "system"];
+
+/** Cota lunară a utilizatorului (`Quota` din contract). */
+export type UserQuota = {
+  month: string;
+  /** Rezervări incluse pe lună; null = nu se aplică (profesori, externi). */
+  included: number | null;
+  used: number;
+  remaining: number | null;
+  resetsOn: string | null;
+  limitReached: boolean;
+  appliesTo: "student" | "professor_unlimited" | "external_none" | null;
+};
+
+export type BookingDetails = AdminBooking & {
+  userRole: string | null;
+  usesIncludedQuota: boolean;
+  cancelledBy: CancelledBy | null;
+  cancelReason: string | null;
+  cancelledAt: string | null;
+  quotaRefunded: boolean;
+  createdAt: string | null;
+  quota: UserQuota | null;
+};
+
+function parseQuota(raw: unknown): UserQuota | null {
+  if (!isObject(raw)) return null;
+  const month = typeof raw.month === "string" && /^\d{4}-\d{2}$/.test(raw.month) ? raw.month : null;
+  if (!month) return null;
+  const nullableCount = (value: unknown) => (value === null || value === undefined ? null : count(value));
+  return {
+    month,
+    included: nullableCount(raw.included),
+    used: count(raw.used),
+    remaining: nullableCount(raw.remaining),
+    resetsOn: isValidIsoDate(raw.resetsOn) ? raw.resetsOn : null,
+    limitReached: raw.limitReached === true,
+    appliesTo: oneOf(raw.appliesTo, ["student", "professor_unlimited", "external_none"] as const),
+  };
+}
+
+/** GET /admin/bookings/{bookingId} — rezervarea și cota lunară a utilizatorului. */
+export async function getAdminBooking(id: string, signal?: AbortSignal): Promise<BookingDetails> {
+  const raw = await apiRequest<unknown>(`/admin/bookings/${idPath(id)}`, "GET", undefined, {}, { signal });
+  const booking = parseBooking(raw);
+  if (!booking || !isObject(raw)) throw new Error("Răspuns invalid pentru rezervare.");
+  return {
+    ...booking,
+    userRole: isObject(raw.user) ? text(raw.user.role) : null,
+    usesIncludedQuota: raw.usesIncludedQuota === true,
+    cancelledBy: oneOf(raw.cancelledBy, CANCELLED_BY),
+    cancelReason: text(raw.cancelReason),
+    cancelledAt: dateTime(raw.cancelledAt),
+    quotaRefunded: raw.quotaRefunded === true,
+    createdAt: dateTime(raw.createdAt),
+    quota: parseQuota(raw.userQuota),
+  };
+}
+

@@ -1,5 +1,5 @@
 // Mock pentru rutele /admin/* din contract:
-//   GET  /admin/schedule, GET /admin/bookings
+//   GET  /admin/schedule, GET /admin/bookings, GET /admin/bookings/{bookingId}
 //   POST /admin/activities/preview, POST /admin/activities
 //   GET / PUT / DELETE /admin/activities/{activityId}
 //   GET /admin/incidents, POST /admin/incidents/preview, POST /admin/incidents
@@ -881,6 +881,44 @@ function requireAdmin(token: string | null | undefined) {
   if (role !== "administrator") fail(403, "FORBIDDEN", "Nu ai permisiunea necesară.");
 }
 
+/**
+ * GET /admin/bookings/{bookingId}: rezervarea (Booking) și cota lunară a
+ * utilizatorului (Quota). Ziua se află din id (b-AAAA-LL-ZZ-n).
+ */
+function bookingDetails(id: string) {
+  const day = /^b-(\d{4}-\d{2}-\d{2})-\d+$/.exec(id)?.[1];
+  if (day && validDate(day)) ensureDay(day);
+  const booking = bookings.get(id);
+  if (!booking) fail(404, "NOT_FOUND", "Rezervarea nu există.");
+
+  // Rezervarea a fost făcută cu 3 zile înainte, dar niciodată „în viitor”.
+  const createdAt = new Date(Math.min(Date.parse(booking.startTime) - 3 * 86_400_000, Date.now() - 3_600_000)).toISOString();
+
+  // Cota lunară: doar studenții au 4 rezervări incluse; profesorii nelimitat, externii fără cotă.
+  const month = booking.startTime.slice(0, 7);
+  const [y, m] = month.split("-").map(Number);
+  const resetsOn = `${m === 12 ? y + 1 : y}-${String(m === 12 ? 1 : m + 1).padStart(2, "0")}-01`;
+  const role = booking.user.role;
+  const counted = [...bookings.values()].filter(
+    (b) => b.user.id === booking.user.id && b.startTime.startsWith(month) && b.status !== "cancelled" && b.status !== "rejected",
+  ).length;
+  const used = Math.min(counted, 4);
+  const userQuota =
+    role === "student"
+      ? { month, included: 4, used, remaining: 4 - used, resetsOn, priority: false, limitReached: used >= 4, appliesTo: "student" }
+      : role === "professor"
+        ? { month, included: null, used: counted, remaining: null, resetsOn, priority: true, limitReached: false, appliesTo: "professor_unlimited" }
+        : { month, included: null, used: counted, remaining: null, resetsOn, priority: false, limitReached: false, appliesTo: "external_none" };
+
+  return {
+    ...booking,
+    createdAt,
+    updatedAt: booking.cancelledAt ?? createdAt,
+    canCancel: booking.status === "confirmed" && Date.parse(booking.startTime) > Date.now(),
+    userQuota,
+  };
+}
+
 export function adminMockHandler(path: string, method: HttpMethod, token: string | null | undefined, body?: unknown) {
   requireAdmin(token);
 
@@ -896,6 +934,10 @@ export function adminMockHandler(path: string, method: HttpMethod, token: string
     if (!validDate(date)) fail(400, "VALIDATION_ERROR", "Parametrul date trebuie să fie o dată YYYY-MM-DD.");
     return scheduleFor(date, facilityId);
   }
+
+  // /admin/bookings/{bookingId}: detaliile unei rezervări (id-ul trebuie să aibă forma permisă).
+  const bookingRoute = /^\/admin\/bookings\/([A-Za-z0-9_-]{1,64})$/.exec(route);
+  if (bookingRoute && bookingRoute[1] !== "export" && method === "GET") return bookingDetails(bookingRoute[1]);
 
   if (route === "/admin/bookings" && method === "GET") {
     const from = query.get("from") ?? today();

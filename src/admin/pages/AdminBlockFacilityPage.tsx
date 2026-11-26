@@ -22,6 +22,7 @@ import { ApiError } from "../../api/client";
 import { useAuth } from "../../context/useAuth";
 import { CheckCheckIcon, CheckIcon, LockOpenIcon, PlusIcon, ShieldCheckIcon, TriangleAlertIcon } from "../AdminIcons";
 import { ID_PATTERN } from "../activityForm";
+import { ROLE_LABEL } from "../bookingText";
 import { INCIDENT_SHORT, formatSpan } from "../incidentText";
 import {
   CHANNEL_LABEL,
@@ -64,13 +65,6 @@ const PREVIEW_DELAY = 400;
 /** Canalele afișate în Figma; „În aplicație” e mereu inclus de server. */
 const SHOWN_CHANNELS: Channel[] = ["sms", "push", "email"];
 
-/** Cum apare rolul unei persoane afectate. */
-const ROLE_LABEL: Record<string, string> = {
-  student: "Student",
-  professor: "Cadru didactic",
-  external: "Extern",
-  administrator: "Administrator",
-};
 
 type BlockForm = {
   facilityId: string;

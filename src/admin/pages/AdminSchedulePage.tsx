@@ -15,7 +15,7 @@
 // „Blocare pentru mentenanță”. Celelalte acțiuni (blochează interval,
 // detalii) sunt afișate ca în Figma, dar inactive: țin de pașii următori.
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { ApiError } from "../../api/client";
 import { useAuth } from "../../context/useAuth";
@@ -27,11 +27,12 @@ import {
   type ActiveIncident,
   type AdminBooking,
   type AdminSchedule,
-  type BookingStatus,
   type FacilityStatus,
   type ScheduleEntry,
   type ScheduleFacility,
 } from "../api";
+import { BOOKING_STATUS } from "../bookingText";
+import BookingDetailsDialog from "../components/BookingDetailsDialog";
 import {
   BLOCK_STYLES,
   HOUR_COUNT,
@@ -57,7 +58,6 @@ import {
 const ROW = 48;
 // Forma acceptată pentru id-ul din adresă (UUID sau număr); orice altceva e ignorat.
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
-const NOT_READY = "Disponibil într-un pas următor";
 
 // Eticheta colorată din cardurile de sus, după starea facilității (culori din Figma).
 const STATUS_BADGE: Record<FacilityStatus, { box: string; icon: string; label: string }> = {
@@ -65,16 +65,6 @@ const STATUS_BADGE: Record<FacilityStatus, { box: string; icon: string; label: s
   under_maintenance: { box: "bg-[#fcede8] text-[#ac443c]", icon: "⚒", label: "În mentenanță" },
   university_activity: { box: "bg-[#e9edf5] text-[#4a5879]", icon: "▣", label: "Activități USV" },
   closed: { box: "bg-gray-200 text-muted", icon: "■", label: "Închisă" },
-};
-
-// Textul stării unei rezervări, afișat în „Rezervare selectată”.
-const BOOKING_STATUS: Record<BookingStatus, string> = {
-  in_verification: "În verificare",
-  confirmed: "Confirmată",
-  awaiting_transfer: "În așteptarea transferului",
-  completed: "Finalizată",
-  rejected: "Respinsă",
-  cancelled: "Anulată",
 };
 
 // Tot ce s-a încărcat pentru o anumită zi + filtru. `key` spune pentru ce cerere
@@ -129,6 +119,10 @@ export default function AdminSchedulePage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // Momentul deschiderii paginii: ascundem acțiunile care nu mai au sens pentru ce s-a încheiat.
   const [openedAt] = useState(() => Date.now());
+  // Rezervarea afișată în fereastra „Detaliile rezervării” (null = fereastră închisă).
+  const [detailsId, setDetailsId] = useState<string | null>(null);
+  // Funcție stabilă: fereastra o folosește într-un efect (Escape / focus).
+  const closeDetails = useCallback(() => setDetailsId(null), []);
   const [loaded, setLoaded] = useState<Loaded | null>(null);
 
   // Parametrii din adresă sunt date de la utilizator: îi validăm înainte de folosire.
@@ -494,6 +488,9 @@ export default function AdminSchedulePage() {
         </div>
       </Card>
 
+      {/* Fereastra „Detaliile rezervării” (GET /admin/bookings/{id}); 401 → delogare. */}
+      <BookingDetailsDialog bookingId={detailsId} onClose={closeDetails} onUnauthorized={logout} />
+
       {/* Sub orar: rezervarea selectată și regula bazinului. */}
       <div className="flex flex-col gap-3 md:flex-row md:items-start">
         <SelectionCard
@@ -503,6 +500,7 @@ export default function AdminSchedulePage() {
           incident={incident}
           facilityFilter={facilityFilter}
           now={openedAt}
+          onShowBooking={setDetailsId}
         />
 
         {columns.some((f) => lanes.has(f.facilityId)) && (
@@ -522,7 +520,7 @@ export default function AdminSchedulePage() {
 
 /**
  * Cardul de sub orar: detaliile elementului selectat în grilă și acțiunile lui.
- *   - rezervare       → detalii (fereastra de detalii vine într-un pas următor)
+ *   - rezervare       → „Vezi detaliile rezervării” (fereastra cu detalii, istoric, cotă)
  *   - activitate USV  → „Editează activitatea” (doar dacă nu s-a încheiat)
  *   - blocare         → „Deblocare anticipată”, „Istoric intervenție”
  * „Gestionează blocările” apare doar când e selectată o rezervare.
@@ -535,8 +533,10 @@ function SelectionCard(props: {
   incident: ActiveIncident | null;
   facilityFilter: string | null;
   now: number;
+  /** Deschide fereastra „Detaliile rezervării” pentru rezervarea dată. */
+  onShowBooking: (bookingId: string) => void;
 }) {
-  const { day, booking, entry, incident, facilityFilter, now } = props;
+  const { day, booking, entry, incident, facilityFilter, now, onShowBooking } = props;
   const query = new URLSearchParams(facilityFilter ? { zi: day, facilitate: facilityFilter } : { zi: day }).toString();
   const primary = "rounded-[7px] bg-primary px-3 py-2 text-xs font-semibold text-white hover:opacity-90";
 
@@ -618,11 +618,13 @@ function SelectionCard(props: {
         </p>
       )}
       <div className="mt-1 flex flex-wrap gap-3">
+        {/* Activ doar cu o rezervare selectată: deschide fereastra cu detalii, istoric și cotă. */}
         <button
           type="button"
-          disabled
-          title={NOT_READY}
-          className="rounded-[7px] bg-primary px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+          disabled={!booking}
+          title={booking ? undefined : "Alege mai întâi o rezervare din orar"}
+          onClick={() => booking && onShowBooking(booking.id)}
+          className="rounded-[7px] bg-primary px-3 py-2 text-xs font-semibold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
         >
           Vezi detaliile rezervării
         </button>
