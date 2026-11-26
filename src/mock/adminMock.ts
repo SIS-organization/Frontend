@@ -1,5 +1,6 @@
 // Mock pentru rutele /admin/* din contract:
 //   GET  /admin/schedule, GET /admin/bookings, GET /admin/bookings/{bookingId}
+//   POST /admin/bookings/{bookingId}/cancel
 //   POST /admin/activities/preview, POST /admin/activities
 //   GET / PUT / DELETE /admin/activities/{activityId}
 //   GET /admin/incidents, POST /admin/incidents/preview, POST /admin/incidents
@@ -919,6 +920,34 @@ function bookingDetails(id: string) {
   };
 }
 
+/**
+ * POST /admin/bookings/{bookingId}/cancel — anulare administrativă.
+ * Motiv obligatoriu (3–300); doar rezervările active și neîncheiate (altfel 409).
+ * Restituie cota studenților; regula „cu 2 ore înainte” nu se aplică administratorului.
+ */
+function cancelBookingAsAdmin(id: string, raw: unknown) {
+  const day = /^b-(\d{4}-\d{2}-\d{2})-\d+$/.exec(id)?.[1];
+  if (day && validDate(day)) ensureDay(day);
+  const booking = bookings.get(id);
+  if (!booking) fail(404, "NOT_FOUND", "Rezervarea nu există.");
+  if (!isObject(raw)) fail(400, "VALIDATION_ERROR", "Corpul cererii lipsește.");
+  const reason = textField(raw, "reason", 3, 300, "Motivul");
+  if (!ACTIVE_BOOKING.includes(booking.status) || Date.parse(booking.endTime) <= Date.now()) {
+    fail(409, "BOOKING_NOT_ACTIVE", "Rezervarea nu mai este activă (a fost deja anulată sau s-a încheiat).");
+  }
+  booking.status = "cancelled";
+  booking.cancelledBy = "administrator";
+  booking.cancelReason = reason;
+  booking.cancelledAt = new Date().toISOString();
+  booking.quotaRefunded = booking.usesIncludedQuota;
+  return {
+    booking,
+    quotaRestored: booking.quotaRefunded,
+    // În mock: o persoană de pe lista de așteptare e anunțată că s-a eliberat locul.
+    waitlistNotified: 1,
+  };
+}
+
 export function adminMockHandler(path: string, method: HttpMethod, token: string | null | undefined, body?: unknown) {
   requireAdmin(token);
 
@@ -936,8 +965,11 @@ export function adminMockHandler(path: string, method: HttpMethod, token: string
   }
 
   // /admin/bookings/{bookingId}: detaliile unei rezervări (id-ul trebuie să aibă forma permisă).
-  const bookingRoute = /^\/admin\/bookings\/([A-Za-z0-9_-]{1,64})$/.exec(route);
-  if (bookingRoute && bookingRoute[1] !== "export" && method === "GET") return bookingDetails(bookingRoute[1]);
+  const bookingRoute = /^\/admin\/bookings\/([A-Za-z0-9_-]{1,64})(\/cancel)?$/.exec(route);
+  if (bookingRoute && bookingRoute[1] !== "export") {
+    if (!bookingRoute[2] && method === "GET") return bookingDetails(bookingRoute[1]);
+    if (bookingRoute[2] && method === "POST") return cancelBookingAsAdmin(bookingRoute[1], body);
+  }
 
   if (route === "/admin/bookings" && method === "GET") {
     const from = query.get("from") ?? today();

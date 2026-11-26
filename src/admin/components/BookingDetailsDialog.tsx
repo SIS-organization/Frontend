@@ -3,14 +3,13 @@
 // pagina „Rezervări”. Datele vin din GET /admin/bookings/{bookingId}:
 // rezervarea și cota lunară a persoanei (Quota).
 //
-// Cât timp e deschisă, pagina din spate nu se poate derula (doar conținutul ferestrei).
-// Accesibilitate: role="dialog" + aria-modal, focus pe butonul de închidere la
-// deschidere și înapoi pe elementul anterior la închidere; se închide cu Escape
-// sau cu click în afara ferestrei. Textele de la server sunt afișate ca text (fără HTML).
+// Fereastra în sine (fundal, Escape, focus, derulare blocată) e AdminDialog.
+// Textele de la server sunt afișate ca text simplu (fără HTML).
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { ApiError } from "../../api/client";
 import { getAdminBooking, type BookingDetails, type UserQuota } from "../api";
+import AdminDialog from "./AdminDialog";
 import { BOOKING_STATUS, CANCELLED_BY_LABEL, ROLE_LABEL } from "../bookingText";
 import { bucharestParts, formatClock, formatDayMonth, formatDayMonthYear, formatTimeRange } from "../time";
 
@@ -79,7 +78,6 @@ export default function BookingDetailsDialog(props: {
 }) {
   const { bookingId, onClose, onUnauthorized } = props;
   const [result, setResult] = useState<{ id: string; data: BookingDetails | null; error: string | null } | null>(null);
-  const closeRef = useRef<HTMLButtonElement>(null);
 
   // Încărcăm detaliile la fiecare deschidere; cererea se anulează dacă fereastra se închide.
   useEffect(() => {
@@ -95,132 +93,75 @@ export default function BookingDetailsDialog(props: {
     return () => controller.abort();
   }, [bookingId, onUnauthorized]);
 
-  // Cât timp fereastra e deschisă, pagina din spate nu se mai poate derula.
-  // Bara de derulare dispare, așa că adăugăm lățimea ei ca spațiu în dreapta,
-  // ca orarul să nu „sară” în lateral. La închidere refacem valorile anterioare.
-  useEffect(() => {
-    if (!bookingId) return;
-    const root = document.documentElement;
-    const scrollbar = window.innerWidth - root.clientWidth;
-    const previous = { overflow: root.style.overflow, paddingRight: root.style.paddingRight };
-    root.style.overflow = "hidden";
-    if (scrollbar > 0) root.style.paddingRight = `${scrollbar}px`;
-    return () => {
-      root.style.overflow = previous.overflow;
-      root.style.paddingRight = previous.paddingRight;
-    };
-  }, [bookingId]);
-
-  // Escape închide fereastra; focusul merge pe „Închide” și revine apoi unde era.
-  useEffect(() => {
-    if (!bookingId) return;
-    const previous = document.activeElement as HTMLElement | null;
-    closeRef.current?.focus();
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      previous?.focus();
-    };
-  }, [bookingId, onClose]);
-
   if (!bookingId) return null;
   const current = result && result.id === bookingId ? result : null;
   const booking = current?.data ?? null;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
+    <AdminDialog
+      title="Detaliile rezervării"
+      onClose={onClose}
+      subtitle={
+        booking && (
+          <p className="flex flex-wrap items-center gap-2 text-[13px] text-muted">
+            {booking.code}
+            <span className={`rounded-md px-2 py-0.5 text-xs font-semibold ${STATUS_TONE[booking.status]}`}>
+              {BOOKING_STATUS[booking.status]}
+            </span>
+          </p>
+        )
+      }
     >
-      <section
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="booking-details-title"
-        className="flex max-h-[90vh] w-full max-w-[640px] flex-col overflow-hidden rounded-xl bg-white shadow-xl"
-      >
-        <header className="flex items-start justify-between gap-4 border-b border-[#dde5e2] px-6 py-4">
-          <div className="flex flex-col gap-1">
-            <p className="text-[10px] font-bold text-primary">ADMINISTRATORUL BAZEI SPORTIVE</p>
-            <h2 id="booking-details-title" className="text-xl text-heading">
-              Detaliile rezervării
-            </h2>
-            {booking && (
-              <p className="flex flex-wrap items-center gap-2 text-[13px] text-muted">
-                {booking.code}
-                <span className={`rounded-md px-2 py-0.5 text-xs font-semibold ${STATUS_TONE[booking.status]}`}>
-                  {BOOKING_STATUS[booking.status]}
-                </span>
+      {!current && <p className="text-sm text-muted">Se încarcă detaliile…</p>}
+      {current?.error && (
+        <p role="alert" className="rounded-lg bg-[#fcedea] px-3 py-2 text-sm text-[#ac443c]">
+          {current.error}
+        </p>
+      )}
+
+      {booking && (
+        <>
+          {/* Datele principale ale rezervării. */}
+          <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
+            {(
+              [
+                ["Persoană", `${booking.userName ?? "—"}${booking.userRole ? ` · ${ROLE_LABEL[booking.userRole] ?? booking.userRole}` : ""}`],
+                ["Facilitate", booking.facilityName],
+                ["Data", formatDayMonthYear(bucharestParts(booking.startTime).date)],
+                ["Interval", formatTimeRange(booking.startTime, booking.endTime)],
+                ["Cotă lunară", booking.usesIncludedQuota ? "Inclusă în cele 4 rezervări" : "Nu se numără în cotă"],
+                ["Creată", booking.createdAt ? momentLabel(booking.createdAt) : "—"],
+              ] as const
+            ).map(([label, value]) => (
+              <div key={label} className="flex flex-col gap-0.5">
+                <dt className="text-xs font-semibold text-muted">{label}</dt>
+                <dd className="text-sm text-heading">{value}</dd>
+              </div>
+            ))}
+          </dl>
+
+          {/* Anularea (dacă e cazul): cine, când, de ce și dacă s-a restituit cota. */}
+          {booking.status === "cancelled" && (
+            <div className="flex flex-col gap-1 rounded-xl bg-[#fcedea] p-4 text-[13px] text-[#ac443c]">
+              <p className="font-semibold">
+                Anulată {booking.cancelledBy ? CANCELLED_BY_LABEL[booking.cancelledBy] : ""}
+                {booking.cancelledAt && ` · ${momentLabel(booking.cancelledAt)}`}
               </p>
-            )}
-          </div>
-          <button
-            ref={closeRef}
-            type="button"
-            onClick={onClose}
-            className="rounded-lg border border-[#dde5e2] px-3 py-1.5 text-[13px] font-semibold text-heading hover:bg-bg"
-          >
-            Închide
-          </button>
-        </header>
-
-        <div className="flex flex-col gap-5 overflow-y-auto overscroll-contain px-6 py-5 leading-normal">
-          {!current && <p className="text-sm text-muted">Se încarcă detaliile…</p>}
-          {current?.error && (
-            <p role="alert" className="rounded-lg bg-[#fcedea] px-3 py-2 text-sm text-[#ac443c]">
-              {current.error}
-            </p>
+              {booking.cancelReason && <p>Motiv: {booking.cancelReason}</p>}
+              {booking.usesIncludedQuota && (
+                <p>{booking.quotaRefunded ? "Rezervarea a fost restituită în cota lunară." : "Cota nu a fost restituită."}</p>
+              )}
+            </div>
           )}
 
-          {booking && (
-            <>
-              {/* Datele principale ale rezervării. */}
-              <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
-                {(
-                  [
-                    ["Persoană", `${booking.userName ?? "—"}${booking.userRole ? ` · ${ROLE_LABEL[booking.userRole] ?? booking.userRole}` : ""}`],
-                    ["Facilitate", booking.facilityName],
-                    ["Data", formatDayMonthYear(bucharestParts(booking.startTime).date)],
-                    ["Interval", formatTimeRange(booking.startTime, booking.endTime)],
-                    ["Cotă lunară", booking.usesIncludedQuota ? "Inclusă în cele 4 rezervări" : "Nu se numără în cotă"],
-                    ["Creată", booking.createdAt ? momentLabel(booking.createdAt) : "—"],
-                  ] as const
-                ).map(([label, value]) => (
-                  <div key={label} className="flex flex-col gap-0.5">
-                    <dt className="text-xs font-semibold text-muted">{label}</dt>
-                    <dd className="text-sm text-heading">{value}</dd>
-                  </div>
-                ))}
-              </dl>
-
-              {/* Anularea (dacă e cazul): cine, când, de ce și dacă s-a restituit cota. */}
-              {booking.status === "cancelled" && (
-                <div className="flex flex-col gap-1 rounded-xl bg-[#fcedea] p-4 text-[13px] text-[#ac443c]">
-                  <p className="font-semibold">
-                    Anulată {booking.cancelledBy ? CANCELLED_BY_LABEL[booking.cancelledBy] : ""}
-                    {booking.cancelledAt && ` · ${momentLabel(booking.cancelledAt)}`}
-                  </p>
-                  {booking.cancelReason && <p>Motiv: {booking.cancelReason}</p>}
-                  {booking.usesIncludedQuota && (
-                    <p>{booking.quotaRefunded ? "Rezervarea a fost restituită în cota lunară." : "Cota nu a fost restituită."}</p>
-                  )}
-                </div>
-              )}
-
-              {booking.quota && (
-                <section className="flex flex-col gap-2 rounded-xl bg-bg p-4">
-                  <h3 className="text-sm font-semibold text-heading">Cota lunară a persoanei</h3>
-                  <QuotaBlock quota={booking.quota} />
-                </section>
-              )}
-            </>
+          {booking.quota && (
+            <section className="flex flex-col gap-2 rounded-xl bg-bg p-4">
+              <h3 className="text-sm font-semibold text-heading">Cota lunară a persoanei</h3>
+              <QuotaBlock quota={booking.quota} />
+            </section>
           )}
-        </div>
-      </section>
-    </div>
+        </>
+      )}
+    </AdminDialog>
   );
 }

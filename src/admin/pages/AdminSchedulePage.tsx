@@ -11,9 +11,8 @@
 // facilitatea alese aici deja completate. Un click pe un curs sau un eveniment
 // USV, o reparație / igienizare sau o rezervare din grilă le SELECTEAZĂ: detaliile
 // și acțiunile apar jos, în cardul de selecție (Editează activitatea, Deblocare
-// anticipată, Istoric intervenție). „Blochează interval” deschide
-// „Blocare pentru mentenanță”. Celelalte acțiuni (blochează interval,
-// detalii) sunt afișate ca în Figma, dar inactive: țin de pașii următori.
+// anticipată, Istoric intervenție, Vezi detaliile rezervării, Anulează rezervarea).
+// „Blochează interval” deschide „Blocare pentru mentenanță”.
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
@@ -33,6 +32,7 @@ import {
 } from "../api";
 import { BOOKING_STATUS } from "../bookingText";
 import BookingDetailsDialog from "../components/BookingDetailsDialog";
+import CancelBookingDialog from "../components/CancelBookingDialog";
 import {
   BLOCK_STYLES,
   HOUR_COUNT,
@@ -123,6 +123,9 @@ export default function AdminSchedulePage() {
   const [detailsId, setDetailsId] = useState<string | null>(null);
   // Funcție stabilă: fereastra o folosește într-un efect (Escape / focus).
   const closeDetails = useCallback(() => setDetailsId(null), []);
+  // Rezervarea pentru care e deschisă fereastra „Anulează rezervarea” și mesajul de după anulare.
+  const [cancelTarget, setCancelTarget] = useState<AdminBooking | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [loaded, setLoaded] = useState<Loaded | null>(null);
 
   // Parametrii din adresă sunt date de la utilizator: îi validăm înainte de folosire.
@@ -210,6 +213,7 @@ export default function AdminSchedulePage() {
       else search.delete("facilitate");
     }
     setSelectedId(null);
+    setNotice(null);
     setParams(search);
   };
 
@@ -491,6 +495,32 @@ export default function AdminSchedulePage() {
       {/* Fereastra „Detaliile rezervării” (GET /admin/bookings/{id}); 401 → delogare. */}
       <BookingDetailsDialog bookingId={detailsId} onClose={closeDetails} onUnauthorized={logout} />
 
+      {/* Fereastra „Anulează rezervarea” (POST /admin/bookings/{id}/cancel). După anulare
+          reîncărcăm orarul, ca rezervarea să dispară și intervalul să apară liber. */}
+      {cancelTarget && (
+        <CancelBookingDialog
+          booking={cancelTarget}
+          onClose={() => setCancelTarget(null)}
+          onUnauthorized={logout}
+          onCancelled={(booking, result) => {
+            setCancelTarget(null);
+            setSelectedId(null);
+            setNotice(
+              `Rezervarea ${booking.code} (${booking.userName ?? "fără nume"}) a fost anulată, iar persoana a fost notificată cu motivul.` +
+                (result.quotaRestored ? " Cota lunară i-a fost restituită." : "") +
+                (result.waitlistNotified > 0 ? ` ${result.waitlistNotified} ${result.waitlistNotified === 1 ? "persoană de pe lista de așteptare a fost anunțată" : "persoane de pe lista de așteptare au fost anunțate"}.` : ""),
+            );
+            setReloadKey((k) => k + 1);
+          }}
+        />
+      )}
+
+      {notice && (
+        <p role="status" className="rounded-lg bg-[#e7f2ef] px-4 py-3 text-sm text-primary">
+          {notice}
+        </p>
+      )}
+
       {/* Sub orar: rezervarea selectată și regula bazinului. */}
       <div className="flex flex-col gap-3 md:flex-row md:items-start">
         <SelectionCard
@@ -501,6 +531,10 @@ export default function AdminSchedulePage() {
           facilityFilter={facilityFilter}
           now={openedAt}
           onShowBooking={setDetailsId}
+          onCancelBooking={(booking) => {
+            setNotice(null);
+            setCancelTarget(booking);
+          }}
         />
 
         {columns.some((f) => lanes.has(f.facilityId)) && (
@@ -518,12 +552,15 @@ export default function AdminSchedulePage() {
   );
 }
 
+/** Statusurile în care o rezervare mai poate fi anulată de administrator. */
+const CANCELLABLE: readonly AdminBooking["status"][] = ["confirmed", "in_verification", "awaiting_transfer"];
+
 /**
  * Cardul de sub orar: detaliile elementului selectat în grilă și acțiunile lui.
- *   - rezervare       → „Vezi detaliile rezervării” (fereastra cu detalii, istoric, cotă)
+ *   - rezervare       → „Vezi detaliile rezervării”, „Anulează rezervarea”
  *   - activitate USV  → „Editează activitatea” (doar dacă nu s-a încheiat)
  *   - blocare         → „Deblocare anticipată”, „Istoric intervenție”
- * „Gestionează blocările” apare doar când e selectată o rezervare.
+ * Pentru o rezervare activă apare și „Anulează rezervarea” (anulare administrativă).
  * Id-urile vin de la server, sunt verificate în api.ts și codificate în adrese.
  */
 function SelectionCard(props: {
@@ -535,8 +572,10 @@ function SelectionCard(props: {
   now: number;
   /** Deschide fereastra „Detaliile rezervării” pentru rezervarea dată. */
   onShowBooking: (bookingId: string) => void;
+  /** Deschide fereastra „Anulează rezervarea” pentru rezervarea dată. */
+  onCancelBooking: (booking: AdminBooking) => void;
 }) {
-  const { day, booking, entry, incident, facilityFilter, now, onShowBooking } = props;
+  const { day, booking, entry, incident, facilityFilter, now, onShowBooking, onCancelBooking } = props;
   const query = new URLSearchParams(facilityFilter ? { zi: day, facilitate: facilityFilter } : { zi: day }).toString();
   const primary = "rounded-[7px] bg-primary px-3 py-2 text-xs font-semibold text-white hover:opacity-90";
 
@@ -628,14 +667,15 @@ function SelectionCard(props: {
         >
           Vezi detaliile rezervării
         </button>
-        {/* Doar cu o rezervare selectată: incidentul activ al zilei (dacă există) sau pagina de blocare. */}
-        {booking && (
-          <Link
-            to={incident ? `/admin/orar/incidente/${encodeURIComponent(incident.id)}?${query}` : `/admin/orar/blocare?${query}`}
-            className={toolButton}
+        {/* Anulare administrativă: doar pentru rezervările active care nu s-au încheiat. */}
+        {booking && CANCELLABLE.includes(booking.status) && Date.parse(booking.endTime) > now && (
+          <button
+            type="button"
+            onClick={() => onCancelBooking(booking)}
+            className="rounded-[7px] border border-[#f0c9c3] bg-white px-3 py-2 text-xs font-semibold text-[#ac443c] hover:bg-[#fcedea]"
           >
-            Gestionează blocările
-          </Link>
+            Anulează rezervarea
+          </button>
         )}
       </div>
     </Card>

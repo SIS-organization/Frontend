@@ -690,3 +690,31 @@ export async function getAdminBooking(id: string, signal?: AbortSignal): Promise
   };
 }
 
+/** Limitele motivului de anulare (contract: 3–300 de caractere). */
+export const CANCEL_REASON_MIN = 3;
+export const CANCEL_REASON_MAX = 300;
+
+/** Rezultatul anulării administrative (`CancelResult` din contract). */
+export type CancelResult = {
+  /** Cota a fost restituită (doar la studenți). */
+  quotaRestored: boolean;
+  /** Câte persoane de pe lista de așteptare au fost anunțate că s-a eliberat locul. */
+  waitlistNotified: number;
+};
+
+/**
+ * POST /admin/bookings/{bookingId}/cancel — anulare administrativă.
+ * Motivul e obligatoriu și ajunge la persoana afectată în notificare; serverul
+ * eliberează intervalul, restituie cota și înregistrează acțiunea în jurnal.
+ * 409 = rezervarea nu mai este activă.
+ */
+export async function cancelAdminBooking(id: string, reason: string): Promise<CancelResult> {
+  const trimmed = reason.trim();
+  if (trimmed.length < CANCEL_REASON_MIN || trimmed.length > CANCEL_REASON_MAX) {
+    throw new Error(`Motivul trebuie să aibă între ${CANCEL_REASON_MIN} și ${CANCEL_REASON_MAX} de caractere.`);
+  }
+  const raw = await apiRequest<unknown>(`/admin/bookings/${idPath(id)}/cancel`, "POST", { reason: trimmed });
+  if (!isObject(raw)) throw new Error("Răspuns invalid la anularea rezervării.");
+  return { quotaRestored: raw.quotaRestored === true, waitlistNotified: count(raw.waitlistNotified) };
+}
+
