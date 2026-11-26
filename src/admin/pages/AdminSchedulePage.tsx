@@ -9,9 +9,10 @@
 //
 // „Adaugă activitate USV” deschide formularul de activitate, cu ziua și
 // facilitatea alese aici deja completate. Un click pe un curs sau un eveniment
-// USV din grilă deschide „Gestionează activitatea USV”, iar „Blochează interval”
-// deschide „Blocare pentru mentenanță”. Reparațiile / igienizările din grilă și
-// „Gestionează blocările” deschid „Deblocare anticipată”. Celelalte acțiuni (blochează interval,
+// USV, o reparație / igienizare sau o rezervare din grilă le SELECTEAZĂ: detaliile
+// și acțiunile apar jos, în cardul de selecție (Editează activitatea, Deblocare
+// anticipată, Istoric intervenție). „Blochează interval” deschide
+// „Blocare pentru mentenanță”. Celelalte acțiuni (blochează interval,
 // detalii) sunt afișate ca în Figma, dar inactive: țin de pașii următori.
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
@@ -23,10 +24,12 @@ import {
   getAdminBookingsForDay,
   getAdminSchedule,
   getFacilityKinds,
+  type ActiveIncident,
   type AdminBooking,
   type AdminSchedule,
   type BookingStatus,
   type FacilityStatus,
+  type ScheduleEntry,
   type ScheduleFacility,
 } from "../api";
 import {
@@ -122,7 +125,10 @@ export default function AdminSchedulePage() {
   const { logout } = useAuth();
   const [params, setParams] = useSearchParams();
   const [reloadKey, setReloadKey] = useState(0);
+  // Elementul selectat din grilă: „b:<id>” rezervare, „a:<id>” activitate USV, „i:<id>” incident.
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Momentul deschiderii paginii: ascundem acțiunile care nu mai au sens pentru ce s-a încheiat.
+  const [openedAt] = useState(() => Date.now());
   const [loaded, setLoaded] = useState<Loaded | null>(null);
 
   // Parametrii din adresă sunt date de la utilizator: îi validăm înainte de folosire.
@@ -193,7 +199,11 @@ export default function AdminSchedulePage() {
   const columns = facilityFilter ? allFacilities.filter((f) => f.facilityId === facilityFilter) : allFacilities;
   const bookings = loaded?.bookings ?? [];
   const lanes = loaded?.laneFacilities ?? new Set<string>();
-  const selected = bookings.find((b) => b.id === selectedId) ?? null;
+  const selected = bookings.find((b) => `b:${b.id}` === selectedId) ?? null;
+  const selectedEntry =
+    schedule?.entries.find(
+      (e) => (e.activityId && `a:${e.activityId}` === selectedId) || (e.incidentId && `i:${e.incidentId}` === selectedId),
+    ) ?? null;
   const incident = schedule?.activeIncident ?? null;
 
   // Ziua și filtrul stau în adresă (?zi=2026-10-20&facilitate=...), ca pagina să
@@ -392,7 +402,7 @@ export default function AdminSchedulePage() {
                         const style = BLOCK_STYLES[entry.blockType];
                         const incidentCode =
                           entry.blockType === "repair" && incident && entry.incidentId === incident.id ? incident.code : null;
-                        const className = `absolute flex flex-col gap-0.5 overflow-hidden rounded-[7px] px-[10px] py-1 leading-[1.4] ${style.box}`;
+                        const className = "absolute flex flex-col gap-0.5 overflow-hidden rounded-[7px] px-[10px] py-1 leading-[1.4]";
                         // Blocurile suprapuse (ex. o blocare peste un eveniment) stau unul lângă altul.
                         const position = {
                           top: from * ROW + 3,
@@ -409,30 +419,29 @@ export default function AdminSchedulePage() {
                             </p>
                           </>
                         );
-                        // Cursurile și evenimentele USV se deschid în „Gestionează activitatea USV”.
-                        // Id-ul vine de la server, dar a fost deja verificat în api.ts și e codificat în adresă.
-                        // Reparațiile și igienizările (incidente) se deschid în „Deblocare anticipată”.
-                        const target = entry.activityId
-                          ? { path: `activitati/${encodeURIComponent(entry.activityId)}`, title: "Gestionează activitatea" }
-                          : entry.incidentId
-                            ? { path: `incidente/${encodeURIComponent(entry.incidentId)}`, title: "Detalii incident și deblocare" }
-                            : null;
-                        if (target) {
-                          const query = new URLSearchParams(facilityFilter ? { zi: day, facilitate: facilityFilter } : { zi: day });
+                        // Cursurile, evenimentele și blocările se SELECTEAZĂ (click din nou = deselectare);
+                        // acțiunile pentru ele apar jos, în cardul de selecție.
+                        const key = entry.activityId ? `a:${entry.activityId}` : entry.incidentId ? `i:${entry.incidentId}` : null;
+                        if (key) {
+                          const isSelected = key === selectedId;
                           return (
-                            <Link
+                            <button
                               key={`${entry.startTime}-${entry.title}`}
-                              to={`/admin/orar/${target.path}?${query.toString()}`}
-                              title={target.title}
-                              className={`${className} hover:brightness-95 focus-visible:outline-2 focus-visible:outline-primary`}
+                              type="button"
+                              aria-pressed={isSelected}
+                              onClick={() => setSelectedId(isSelected ? null : key)}
+                              // Selectat = același stil ca rezervările selectate (fundal închis, text alb).
+                              className={`${className} text-left focus-visible:outline-2 focus-visible:outline-primary ${
+                                isSelected ? "bg-primary text-white" : `${style.box} hover:brightness-95`
+                              }`}
                               style={position}
                             >
                               {content}
-                            </Link>
+                            </button>
                           );
                         }
                         return (
-                          <div key={`${entry.startTime}-${entry.title}`} className={className} style={position}>
+                          <div key={`${entry.startTime}-${entry.title}`} className={`${className} ${style.box}`} style={position}>
                             {content}
                           </div>
                         );
@@ -442,13 +451,13 @@ export default function AdminSchedulePage() {
                           server, dar React le afișează ca text simplu, deci nu pot rula cod (XSS). */}
                       {!hasLanes &&
                         bookingBlocks(bookings, facility.facilityId, day).map(({ booking, from, to, index, of }) => {
-                          const isSelected = booking.id === selectedId;
+                          const isSelected = `b:${booking.id}` === selectedId;
                           return (
                             <button
                               key={booking.id}
                               type="button"
                               aria-pressed={isSelected}
-                              onClick={() => setSelectedId(isSelected ? null : booking.id)}
+                              onClick={() => setSelectedId(isSelected ? null : `b:${booking.id}`)}
                               className={`absolute flex flex-col gap-0.5 overflow-hidden rounded-[7px] px-[10px] py-1 text-left leading-[1.4] ${
                                 isSelected ? "bg-primary text-white" : "bg-[#e7f2ef] text-primary hover:bg-[#d7ebe6]"
                               }`}
@@ -487,43 +496,14 @@ export default function AdminSchedulePage() {
 
       {/* Sub orar: rezervarea selectată și regula bazinului. */}
       <div className="flex flex-col gap-3 md:flex-row md:items-start">
-        <Card className="flex min-w-0 flex-1 flex-col gap-2.5 p-4 leading-[1.4]">
-          <p className="text-[10px] font-bold text-primary">REZERVARE SELECTATĂ</p>
-          {selected ? (
-            <>
-              <p className="text-lg text-heading">
-                {selected.userName ?? "Rezervare"} · {selected.facilityName}
-              </p>
-              <p className="text-sm text-muted">
-                {formatDayMonth(day)} · {formatTimeRange(selected.startTime, selected.endTime)} ·{" "}
-                {BOOKING_STATUS[selected.status]}
-              </p>
-            </>
-          ) : (
-            <p className="text-sm text-muted">Alege o rezervare din orar ca să vezi detaliile.</p>
-          )}
-          <div className="mt-1 flex flex-wrap gap-3">
-            <button
-              type="button"
-              disabled
-              title={NOT_READY}
-              className="rounded-[7px] bg-primary px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              Vezi detaliile rezervării
-            </button>
-            {/* Incidentul activ al zilei (dacă există) sau pagina de blocare. */}
-            <Link
-              to={
-                incident
-                  ? `/admin/orar/incidente/${encodeURIComponent(incident.id)}?zi=${day}`
-                  : `/admin/orar/blocare?zi=${day}`
-              }
-              className={toolButton}
-            >
-              Gestionează blocările
-            </Link>
-          </div>
-        </Card>
+        <SelectionCard
+          day={day}
+          booking={selected}
+          entry={selectedEntry}
+          incident={incident}
+          facilityFilter={facilityFilter}
+          now={openedAt}
+        />
 
         {columns.some((f) => lanes.has(f.facilityId)) && (
           <section className="flex min-w-0 flex-1 flex-col gap-2.5 rounded-xl bg-[#e7f2ef] p-4 leading-[1.4] text-primary">
@@ -537,5 +517,125 @@ export default function AdminSchedulePage() {
         )}
       </div>
     </>
+  );
+}
+
+/**
+ * Cardul de sub orar: detaliile elementului selectat în grilă și acțiunile lui.
+ *   - rezervare       → detalii (fereastra de detalii vine într-un pas următor)
+ *   - activitate USV  → „Editează activitatea” (doar dacă nu s-a încheiat)
+ *   - blocare         → „Deblocare anticipată”, „Istoric intervenție”
+ * „Gestionează blocările” apare doar când e selectată o rezervare.
+ * Id-urile vin de la server, sunt verificate în api.ts și codificate în adrese.
+ */
+function SelectionCard(props: {
+  day: string;
+  booking: AdminBooking | null;
+  entry: ScheduleEntry | null;
+  incident: ActiveIncident | null;
+  facilityFilter: string | null;
+  now: number;
+}) {
+  const { day, booking, entry, incident, facilityFilter, now } = props;
+  const query = new URLSearchParams(facilityFilter ? { zi: day, facilitate: facilityFilter } : { zi: day }).toString();
+  const primary = "rounded-[7px] bg-primary px-3 py-2 text-xs font-semibold text-white hover:opacity-90";
+
+  // Activitate USV selectată.
+  if (entry?.activityId) {
+    const base = `/admin/orar/activitati/${encodeURIComponent(entry.activityId)}`;
+    const ended = Date.parse(entry.endTime) <= now;
+    return (
+      <Card className="flex min-w-0 flex-1 flex-col gap-2.5 p-4 leading-[1.4]">
+        <p className="text-[10px] font-bold text-primary">ACTIVITATE USV SELECTATĂ</p>
+        <p className="text-lg text-heading">
+          {entry.title} · {entry.facilityName}
+        </p>
+        <p className="text-sm text-muted">
+          {/* Sursa (ex. „Eveniment USV · Clubul Sportiv Universitar”) include deja tipul; altfel afișăm tipul. */}
+          {formatDayMonth(day)} · {formatTimeRange(entry.startTime, entry.endTime)} ·{" "}
+          {entry.source || BLOCK_STYLES[entry.blockType].label}
+        </p>
+        <div className="mt-1 flex flex-wrap gap-3">
+          {/* O activitate încheiată nu se mai poate edita. */}
+          {ended ? (
+            <p className="text-xs text-muted">Activitatea s-a încheiat; nu mai poate fi editată.</p>
+          ) : (
+            <Link to={`${base}?${query}&mod=editare`} className={primary}>
+              Editează activitatea
+            </Link>
+          )}
+        </div>
+      </Card>
+    );
+  }
+
+  // Blocare (reparație / igienizare) selectată.
+  if (entry?.incidentId) {
+    const base = `/admin/orar/incidente/${encodeURIComponent(entry.incidentId)}`;
+    const ended = Date.parse(entry.endTime) <= now;
+    const code = incident && incident.id === entry.incidentId ? incident.code : null;
+    return (
+      <Card className="flex min-w-0 flex-1 flex-col gap-2.5 p-4 leading-[1.4]">
+        <p className="text-[10px] font-bold text-primary">BLOCARE SELECTATĂ</p>
+        <p className="text-lg text-heading">
+          {entry.title} · {entry.facilityName}
+        </p>
+        <p className="text-sm text-muted">
+          {formatDayMonth(day)} · {formatTimeRange(entry.startTime, entry.endTime)}
+          {code ? ` · ${code}` : entry.source ? ` · ${entry.source}` : ""}
+          {ended && " · încheiată"}
+        </p>
+        <div className="mt-1 flex flex-wrap gap-3">
+          {!ended && (
+            <Link to={`${base}?${query}`} className={primary}>
+              Deblocare anticipată
+            </Link>
+          )}
+          <Link to={`${base}?${query}&fila=istoric`} className={ended ? primary : toolButton}>
+            Istoric intervenție
+          </Link>
+        </div>
+      </Card>
+    );
+  }
+
+  // Rezervare selectată sau nimic selectat.
+  return (
+    <Card className="flex min-w-0 flex-1 flex-col gap-2.5 p-4 leading-[1.4]">
+      <p className="text-[10px] font-bold text-primary">REZERVARE SELECTATĂ</p>
+      {booking ? (
+        <>
+          <p className="text-lg text-heading">
+            {booking.userName ?? "Rezervare"} · {booking.facilityName}
+          </p>
+          <p className="text-sm text-muted">
+            {formatDayMonth(day)} · {formatTimeRange(booking.startTime, booking.endTime)} · {BOOKING_STATUS[booking.status]}
+          </p>
+        </>
+      ) : (
+        <p className="text-sm text-muted">
+          Alege o rezervare, o activitate USV sau o blocare din orar ca să vezi detaliile și acțiunile.
+        </p>
+      )}
+      <div className="mt-1 flex flex-wrap gap-3">
+        <button
+          type="button"
+          disabled
+          title={NOT_READY}
+          className="rounded-[7px] bg-primary px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          Vezi detaliile rezervării
+        </button>
+        {/* Doar cu o rezervare selectată: incidentul activ al zilei (dacă există) sau pagina de blocare. */}
+        {booking && (
+          <Link
+            to={incident ? `/admin/orar/incidente/${encodeURIComponent(incident.id)}?${query}` : `/admin/orar/blocare?${query}`}
+            className={toolButton}
+          >
+            Gestionează blocările
+          </Link>
+        )}
+      </div>
+    </Card>
   );
 }

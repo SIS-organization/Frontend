@@ -1,5 +1,6 @@
 // Pagina „Gestionează activitatea USV” (Figma: „Admin · Gestionează activitatea USV”).
-// Se deschide din orar, cu click pe un curs sau un eveniment USV.
+// Se deschide din orar: selectezi un curs / eveniment USV, apoi „Editează
+// activitatea” (adresa primește „?mod=editare”, deci pagina pornește în editare).
 //
 // Meniul activității are trei acțiuni, conform Swagger:
 //   - Vezi detalii          → GET    /admin/activities/{id} (formular doar de citit)
@@ -60,7 +61,8 @@ export default function AdminActivityManagePage() {
   const [facilities, setFacilities] = useState<FacilityKind[]>([]);
   const [loadError, setLoadError] = useState<string | null>(validId ? null : "Adresa activității nu este validă.");
   const [form, setForm] = useState<ActivityForm | null>(null);
-  const [mode, setMode] = useState<Mode>("view");
+  // „?mod=editare” (din cardul de selecție al orarului) deschide direct editarea.
+  const [mode, setMode] = useState<Mode>(() => (params.get("mod") === "editare" ? "edit" : "view"));
   const [showErrors, setShowErrors] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -80,6 +82,8 @@ export default function AdminActivityManagePage() {
         setActivity(loaded);
         setForm(formFromActivity(loaded));
         setFacilities(list);
+        // O activitate anulată sau încheiată nu se poate edita: rămânem la „Vezi detalii”.
+        if (loaded.status === "cancelled" || lastEnd(loaded) <= openedAt) setMode("view");
       })
       .catch((err: unknown) => {
         if (controller.signal.aborted) return;
@@ -87,7 +91,7 @@ export default function AdminActivityManagePage() {
         else setLoadError(describeError(err));
       });
     return () => controller.abort();
-  }, [activityId, validId, logout]);
+  }, [activityId, validId, logout, openedAt]);
 
   // O activitate deja începută își păstrează ziua și ora de început (sunt în trecut).
   const started = useMemo(() => {

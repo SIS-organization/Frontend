@@ -1,6 +1,7 @@
 // Pagina „Deblocare anticipată” (Figma: „Admin · Deblocare anticipată”).
-// Se deschide din orar (click pe o reparație / igienizare), din „Gestionează
-// blocările” sau din lista de incidente a paginii „Blocare pentru mentenanță”.
+// Se deschide din orar (selectezi o reparație / igienizare, apoi „Deblocare
+// anticipată” sau „Istoric intervenție” — atunci adresa primește „?fila=istoric”),
+// din „Gestionează blocările” sau din lista paginii „Blocare pentru mentenanță”.
 //
 // Două file:
 //   - „Incident activ”: detaliile incidentului și redeschiderea mai devreme.
@@ -75,7 +76,8 @@ export default function AdminIncidentPage() {
 
   const [incident, setIncident] = useState<Incident | null>(null);
   const [loadError, setLoadError] = useState<string | null>(validId ? null : "Adresa incidentului nu este validă.");
-  const [tab, setTab] = useState<Tab>("incident");
+  // „?fila=istoric” (din cardul de selecție al orarului) deschide direct istoricul.
+  const [tab, setTab] = useState<Tab>(() => (params.get("fila") === "istoric" ? "history" : "incident"));
   const [log, setLog] = useState<{ reload: number; items: LogEntry[] | null; error: string | null } | null>(null);
   const [logReload, setLogReload] = useState(0);
   const [reopenFrom, setReopenFrom] = useState("");
