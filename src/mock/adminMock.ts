@@ -913,6 +913,7 @@ function bookingDetails(id: string) {
 
   return {
     ...booking,
+    status: shownStatus(booking),
     createdAt,
     updatedAt: booking.cancelledAt ?? createdAt,
     canCancel: booking.status === "confirmed" && Date.parse(booking.startTime) > Date.now(),
@@ -946,6 +947,14 @@ function cancelBookingAsAdmin(id: string, raw: unknown) {
     // În mock: o persoană de pe lista de așteptare e anunțată că s-a eliberat locul.
     waitlistNotified: 1,
   };
+}
+
+/**
+ * Statusul văzut de administrator: o rezervare confirmată care s-a încheiat devine
+ * „completed” (Finalizată), ca în backend. Restul statusurilor rămân neschimbate.
+ */
+function shownStatus(b: MockBooking, now = Date.now()) {
+  return b.status === "confirmed" && Date.parse(b.endTime) <= now ? "completed" : b.status;
 }
 
 /** Elimină diacriticele și literele mari, ca „radu” să găsească „Radu Ionescu”. */
@@ -1019,7 +1028,7 @@ function listBookings(query: URLSearchParams, facilityId: string | null) {
       cancelled: tab === "cancelled" ? items.length : itemsFor("cancelled").length,
       waitlist: 0,
     },
-    items: items.slice(start, start + pageSize),
+    items: items.slice(start, start + pageSize).map((b) => ({ ...b, status: shownStatus(b, now) })),
   };
 }
 

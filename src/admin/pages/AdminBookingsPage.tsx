@@ -6,9 +6,9 @@
 //   - deschide detaliile unei rezervări sau o anulează (aceleași ferestre ca în orar).
 // Datele vin din GET /admin/bookings (tab, q, facilityId, from, to, page, pageSize).
 //
-// Filtrele stau în adresă (?cauta=&facilitate=&de=&pana=&pagina=), ca pagina să poată fi
-// reîncărcată sau trimisă altcuiva; fiecare valoare e verificată înainte de folosire.
-// Momentan e implementată fila „Viitoare”; „Istoric” și „Anulate” vin în pașii următori.
+// Fila și filtrele stau în adresă (?fila=&cauta=&facilitate=&de=&pana=&pagina=), ca pagina
+// să poată fi reîncărcată sau trimisă altcuiva; fiecare valoare e verificată înainte de folosire.
+// File: „Viitoare” (implicită) și „Istoric” (rezervările încheiate); „Anulate” vine într-un pas următor.
 
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -38,11 +38,14 @@ const SEARCH_DELAY = 350;
 /** Statusurile în care o rezervare mai poate fi anulată de administrator. */
 const CANCELLABLE: readonly AdminBooking["status"][] = ["confirmed", "in_verification", "awaiting_transfer"];
 
-/** Filele paginii; deocamdată doar „Viitoare” e activă. */
-const TABS: { value: BookingsTab; label: string; ready: boolean }[] = [
-  { value: "upcoming", label: "Viitoare", ready: true },
-  { value: "history", label: "Istoric", ready: false },
-  { value: "cancelled", label: "Anulate", ready: false },
+/**
+ * Filele paginii. `param` = valoarea din adresă (?fila=); `empty` = textul când lista e goală.
+ * „Anulate” e afișată, dar inactivă până o implementăm.
+ */
+const TABS: { value: BookingsTab; param: string | null; label: string; ready: boolean; empty: string }[] = [
+  { value: "upcoming", param: null, label: "Viitoare", ready: true, empty: "rezervări viitoare" },
+  { value: "history", param: "istoric", label: "Istoric", ready: true, empty: "rezervări încheiate" },
+  { value: "cancelled", param: "anulate", label: "Anulate", ready: false, empty: "rezervări anulate" },
 ];
 
 /** Mesajul pentru administrator, după eroarea primită de la server. */
@@ -74,7 +77,9 @@ export default function AdminBookingsPage() {
   const to = isValidIsoDate(rawTo) && (!from || rawTo >= from) ? rawTo : null;
   const rawPage = Number(params.get("pagina") ?? 1);
   const page = Number.isInteger(rawPage) && rawPage >= 1 && rawPage <= 1000 ? rawPage : 1;
-  const tab: BookingsTab = "upcoming";
+  // Fila din adresă; o valoare necunoscută sau o filă încă inactivă duce la „Viitoare”.
+  const tabInfo = TABS.find((t) => t.ready && t.param !== null && t.param === params.get("fila")) ?? TABS[0];
+  const tab = tabInfo.value;
 
   const [facilities, setFacilities] = useState<FacilityKind[]>([]);
   // Textul din căutare se trimite cu o mică întârziere, ca să nu facem o cerere la fiecare tastă.
@@ -188,6 +193,11 @@ export default function AdminBookingsPage() {
                 aria-selected={active}
                 disabled={!t.ready}
                 title={t.ready ? undefined : COMING_SOON}
+                // Schimbarea filei păstrează căutarea și filtrele, dar revine la pagina 1.
+                onClick={() => {
+                  setNotice(null);
+                  setFilters({ fila: t.param });
+                }}
                 className={`rounded-lg border px-3 py-2 text-xs font-semibold ${
                   active ? "border-primary bg-primary text-white" : "border-[#dde5e2] bg-white text-heading"
                 } disabled:cursor-not-allowed disabled:opacity-50`}
@@ -271,7 +281,7 @@ export default function AdminBookingsPage() {
           {!data && !shown?.error && <p className="py-10 text-center text-sm text-muted">Se încarcă rezervările…</p>}
           {data && data.items.length === 0 && (
             <p className="py-10 text-center text-sm text-muted">
-              {hasFilters ? "Nicio rezervare viitoare nu corespunde filtrelor alese." : "Nu există rezervări viitoare."}
+              {hasFilters ? `Nicio rezervare din „${tabInfo.label}” nu corespunde filtrelor alese.` : `Nu există ${tabInfo.empty}.`}
             </p>
           )}
           {data && data.items.length > 0 && (
@@ -316,7 +326,8 @@ export default function AdminBookingsPage() {
                         >
                           Detalii
                         </button>
-                        {CANCELLABLE.includes(b.status) && Date.parse(b.endTime) > openedAt && (
+                        {/* Doar la rezervările viitoare active (în Istoric s-au încheiat deja). */}
+                        {tab === "upcoming" && CANCELLABLE.includes(b.status) && Date.parse(b.endTime) > openedAt && (
                           <button
                             type="button"
                             onClick={() => {
