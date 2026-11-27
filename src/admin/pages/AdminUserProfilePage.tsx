@@ -2,6 +2,8 @@
 // Se deschide din director, cu „Vezi profilul →”.
 //
 //   - antet: nume · categorie · cum a fost verificată identitatea, „← Înapoi la utilizatori”;
+//   - în cardul contului: „Suspendă accesul” (cont activ) sau „Reactivează accesul” (cont suspendat),
+//     cu confirmare și motiv obligatoriu (UserAccessDialog, PATCH /admin/users/{userId}/access);
 //   - trei file (fila aleasă stă în adresă: ?fila=rezervari | activitate, cu ?pagina=):
 //       „Profil și acces”: cardul cu datele contului (e-mail, facultate / departament,
 //         campus, verificare, stare acces, ultima autentificare, acces prioritar USV)
@@ -22,7 +24,8 @@ import { ApiError } from "../../api/client";
 import { useAuth } from "../../context/useAuth";
 import { ID_PATTERN } from "../activityForm";
 import { getAdminUser, getAdminUserBookings, type AccessStatus, type UserBookingsPage, type UserProfile, type UserRole } from "../api";
-import { Card, secondaryButton } from "../components/ActivityForm";
+import { Card, primaryButton, secondaryButton } from "../components/ActivityForm";
+import UserAccessDialog, { type AccessAction } from "../components/UserAccessDialog";
 import UserActivityTab from "../components/UserActivityTab";
 import UserBookingsTab from "../components/UserBookingsTab";
 import UserBookingsTable from "../components/UserBookingsTable";
@@ -144,6 +147,9 @@ export default function AdminUserProfilePage() {
     data: UserProfile | null;
     error: string | null;
   } | null>(null);
+  // Fereastra de suspendare / reactivare și mesajul de confirmare (legat de profilul afișat).
+  const [accessAction, setAccessAction] = useState<AccessAction | null>(null);
+  const [notice, setNotice] = useState<{ key: string; text: string } | null>(null);
   const [bookingsReload, setBookingsReload] = useState(0);
   const bookingsKey = `${userId}#${bookingsReload}`;
   const [bookings, setBookings] = useState<{
@@ -233,6 +239,30 @@ export default function AdminUserProfilePage() {
   }
 
   const access = user.accessStatus ? ACCESS_LABEL[user.accessStatus] : null;
+  // Doar conturile active sau suspendate își pot schimba accesul de aici. Un cont neconfirmat
+  // devine activ doar după confirmarea e-mailului; administratorii nu se gestionează din această pagină.
+  const accessActionFor: AccessAction | null =
+    user.role === "administrator"
+      ? null
+      : user.accessStatus === "active"
+        ? "suspend"
+        : user.accessStatus === "suspended"
+          ? "reactivate"
+          : null;
+  const shownNotice = notice && notice.key === user.id ? notice.text : null;
+
+  /** Accesul a fost schimbat: actualizăm profilul afișat cu starea confirmată de server. */
+  const accessChanged = (status: AccessStatus) => {
+    setProfile((prev) => (prev && prev.data && prev.key === user.id ? { ...prev, data: { ...prev.data, accessStatus: status } } : prev));
+    setAccessAction(null);
+    setNotice({
+      key: user.id,
+      text:
+        status === "suspended"
+          ? `Accesul lui ${user.name} a fost suspendat. Persoana nu mai poate face rezervări noi.`
+          : `Accesul lui ${user.name} a fost reactivat. Persoana poate rezerva din nou.`,
+    });
+  };
   const lastLogin = user.lastLoginAt
     ? `Ultima autentificare: ${formatShortDate(bucharestParts(user.lastLoginAt).date)}`
     : "Nu s-a autentificat încă";
@@ -268,14 +298,38 @@ export default function AdminUserProfilePage() {
         ))}
       </div>
 
+      {shownNotice && (
+        <p role="status" className="rounded-lg bg-[#e7f2ef] px-4 py-3 text-sm text-primary">
+          {shownNotice}
+        </p>
+      )}
+
       {tab === "bookings" && <UserBookingsTab userId={user.id} page={page} onPage={(n) => go("bookings", n)} onUnauthorized={logout} />}
       {tab === "activity" && <UserActivityTab userId={user.id} page={page} onPage={(n) => go("activity", n)} onUnauthorized={logout} />}
       {tab === "profile" && (
         <>
           {/* Datele contului. Textele vin de la server, dar React le afișează ca text simplu (fără HTML). */}
           <Card className="flex flex-col gap-3 p-6 leading-normal">
-            <h2 className="text-xl text-heading">{user.name}</h2>
-            <p className="text-[13px] break-all text-primary">{user.email}</p>
+            <div className="flex flex-col items-start gap-3 sm:flex-row sm:justify-between">
+              <div className="flex min-w-0 flex-col gap-3">
+                <h2 className="text-xl text-heading">{user.name}</h2>
+                <p className="text-[13px] break-all text-primary">{user.email}</p>
+              </div>
+              {accessActionFor === "suspend" && (
+                <button
+                  type="button"
+                  onClick={() => setAccessAction("suspend")}
+                  className="flex h-10 shrink-0 items-center rounded-lg border border-[#ecc8c3] bg-white px-4 text-[13px] font-semibold text-[#ac443c] hover:bg-[#fcedea]"
+                >
+                  Suspendă accesul
+                </button>
+              )}
+              {accessActionFor === "reactivate" && (
+                <button type="button" onClick={() => setAccessAction("reactivate")} className={`${primaryButton} shrink-0`}>
+                  Reactivează accesul
+                </button>
+              )}
+            </div>
             <div className="flex flex-col gap-0.5 text-[13px] text-muted">
               <p>{[ROLE_LABEL[user.role], user.faculty ?? user.department].filter(Boolean).join(" · ")}</p>
               {(user.campus || identityShort(user)) && <p>{[user.campus, identityShort(user)].filter(Boolean).join(" · ")}</p>}
@@ -314,6 +368,16 @@ export default function AdminUserProfilePage() {
             </div>
           </Card>
         </>
+      )}
+
+      {accessAction && accessActionFor === accessAction && (
+        <UserAccessDialog
+          user={user}
+          action={accessAction}
+          onClose={() => setAccessAction(null)}
+          onChanged={accessChanged}
+          onUnauthorized={logout}
+        />
       )}
     </>
   );

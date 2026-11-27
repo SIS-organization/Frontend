@@ -1215,3 +1215,31 @@ export async function getAuditLog(
     totalPages: Math.max(1, count(raw.totalPages)),
   };
 }
+
+// ===========================================================================
+// Suspendarea / reactivarea accesului — PATCH /admin/users/{userId}/access
+// ===========================================================================
+
+/** Lungimea motivului (contractul cere maximum 300; minimul e același ca la anulări). */
+export const ACCESS_REASON_MIN = 3;
+export const ACCESS_REASON_MAX = 300;
+
+/**
+ * Suspendă (`suspended`) sau reactivează (`active`) accesul unui cont, cu motiv obligatoriu.
+ * Nu schimbă identitatea din SSO sau cota; serverul scrie acțiunea în jurnal.
+ * Întoarce noua stare a accesului, confirmată de server.
+ */
+export async function updateUserAccess(id: string, status: "active" | "suspended", reason: string): Promise<AccessStatus> {
+  if (status !== "active" && status !== "suspended") throw new Error("Stare de acces invalidă.");
+  const trimmed = reason.trim();
+  if (trimmed.length < ACCESS_REASON_MIN || trimmed.length > ACCESS_REASON_MAX) {
+    throw new Error(`Motivul trebuie să aibă între ${ACCESS_REASON_MIN} și ${ACCESS_REASON_MAX} de caractere.`);
+  }
+  const raw = await apiRequest<unknown>(`/admin/users/${idPath(id)}/access`, "PATCH", { status, reason: trimmed });
+  // Răspunsul este `User`: trebuie să fie același cont. `accessStatus` e opțional în contract;
+  // dacă lipsește, 200 („Acces actualizat”) confirmă starea cerută; dacă e altă stare, nu o afișăm.
+  if (!isObject(raw) || identifier(raw.id) !== id) throw new Error("Răspuns invalid la schimbarea accesului. Reîncarcă profilul.");
+  const confirmed = raw.accessStatus === undefined ? status : oneOf(raw.accessStatus, ACCESS_STATUSES);
+  if (confirmed !== status) throw new Error("Serverul nu a confirmat schimbarea accesului. Reîncarcă profilul.");
+  return confirmed;
+}

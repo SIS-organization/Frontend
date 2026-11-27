@@ -4,6 +4,7 @@
 //   GET  /admin/waitlist, GET /admin/bookings/export (CSV)
 //   GET  /admin/users, GET /admin/users/export (CSV)
 //   GET  /admin/users/{userId}, GET /admin/users/{userId}/bookings
+//   PATCH /admin/users/{userId}/access (suspendă / reactivează; se trece în jurnal)
 //   GET  /admin/audit-log (construit din rezervări: confirmări, anulări, cote restituite)
 //   POST /admin/activities/preview, POST /admin/activities
 //   GET / PUT / DELETE /admin/activities/{activityId}
@@ -877,6 +878,11 @@ const PEOPLE = [
 const ROLE_OF: Record<string, string> = { "Elena Rusu": "professor", "Vlad Ciobanu": "external" };
 /** Contul suspendat are doar rezervări mai vechi de atâtea zile (după suspendare nu mai poate rezerva). */
 const SUSPENDED_SINCE_DAYS = 5;
+/**
+ * Conturile suspendate de la pornirea mock-ului. Programul rezervărilor se uită la această listă,
+ * nu la starea curentă: dacă suspenzi pe cineva din profil, rezervările lui nu dispar din orar.
+ */
+const SEED_SUSPENDED = new Set(["u-9"]);
 
 type MockBooking = ReturnType<typeof seedBookings>[number];
 
@@ -948,8 +954,7 @@ function seedBookings(date: string) {
     if (person === undefined) return [];
     const name = PEOPLE[person];
     // Contul suspendat nu mai are rezervări după suspendare.
-    // (USERS e definit mai jos, dar zilele se generează doar la cereri, după încărcarea modulului.)
-    if (USERS.some((u) => u.id === `u-${person + 1}` && u.accessStatus === "suspended") && date > suspendedFrom) return [];
+    if (SEED_SUSPENDED.has(`u-${person + 1}`) && date > suspendedFrom) return [];
     const role = ROLE_OF[name] ?? "student";
     const booking = {
       id: `b-${date}-${index + 1}`,
@@ -1476,6 +1481,51 @@ function userBookings(id: string, query: URLSearchParams) {
   };
 }
 
+/** Schimbările de acces făcute din profil (apar în jurnal, cu administratorul ca autor). */
+const accessChanges: Array<{
+  id: string;
+  occurredAt: string;
+  type: string;
+  title: string;
+  description: string;
+  actor: { id: string; name: string; role: string };
+  facilityId: string | null;
+  reference: string | null;
+  result: string;
+}> = [];
+
+/**
+ * PATCH /admin/users/{userId}/access — body { status: "active" | "suspended", reason } (motiv ≤ 300).
+ * Nu schimbă identitatea sau cota. Un cont neconfirmat nu poate fi activat de aici (ar ocoli
+ * confirmarea e-mailului); 400 și dacă starea cerută e deja cea actuală. Răspuns: `User`.
+ */
+function updateUserAccess(id: string, raw: unknown) {
+  const u = findUser(id);
+  if (!isObject(raw)) fail(400, "VALIDATION_ERROR", "Corpul cererii lipsește.");
+  const status = raw.status;
+  if (status !== "active" && status !== "suspended") fail(400, "VALIDATION_ERROR", "Starea trebuie să fie active sau suspended.");
+  const reason = textField(raw, "reason", 3, 300, "Motivul");
+  if (u.accessStatus === "unverified") fail(400, "VALIDATION_ERROR", "Contul nu este confirmat; accesul nu poate fi schimbat de aici.");
+  if (u.accessStatus === status) {
+    fail(400, "VALIDATION_ERROR", status === "suspended" ? "Accesul este deja suspendat." : "Accesul este deja activ.");
+  }
+  u.accessStatus = status;
+  accessChanges.push({
+    id: `log-access-${accessChanges.length + 1}`,
+    occurredAt: new Date().toISOString(),
+    type: "user_access_changed",
+    title: status === "suspended" ? "Acces suspendat" : "Acces reactivat",
+    description: `${u.name} · Motiv: ${reason}`,
+    actor: ADMIN_ACTOR,
+    facilityId: null,
+    reference: u.id,
+    result: status === "suspended" ? "Suspendat" : "Activ",
+  });
+  const profile = userProfile(id);
+  // Răspunsul este `User` (fără cotă și fără ultima autentificare).
+  return { ...profile, quota: undefined, lastLoginAt: undefined };
+}
+
 // ---------------------------------------------------------------------------
 // Jurnalul de acțiuni (construit din rezervările din perioada mock-ului)
 // ---------------------------------------------------------------------------
@@ -1563,7 +1613,9 @@ function auditLog(query: URLSearchParams, facilityId: string | null) {
   const now = Date.now();
   const day = today();
   const dayOf = (iso: string) => new Intl.DateTimeFormat("en-CA", { timeZone: TIMEZONE }).format(new Date(iso));
-  const all: ReturnType<typeof auditForBooking> = [];
+  const all: Array<{ id: string; occurredAt: string; type: string; actor: { id: string }; facilityId: string | null }> = [
+    ...accessChanges,
+  ];
   for (let d = addDays(day, -DEFAULT_SPAN); d <= addDays(day, DEFAULT_SPAN); d = addDays(d, 1)) {
     for (const b of bookingsOn(d)) all.push(...auditForBooking(b));
   }
@@ -1620,6 +1672,8 @@ export function adminMockHandler(path: string, method: HttpMethod, token: string
   if (userRoute && userRoute[1] !== "export" && method === "GET") {
     return userRoute[2] ? userBookings(userRoute[1], query) : userProfile(userRoute[1]);
   }
+  const accessRoute = /^\/admin\/users\/([A-Za-z0-9_-]{1,64})\/access$/.exec(route);
+  if (accessRoute && method === "PATCH") return updateUserAccess(accessRoute[1], body);
 
   if (route === "/admin/activities/preview" && method === "POST") return previewActivity(body);
   if (route === "/admin/activities" && method === "POST") return createActivity(body);
