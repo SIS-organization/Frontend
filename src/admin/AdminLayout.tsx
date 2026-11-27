@@ -155,15 +155,16 @@ export default function AdminLayout() {
 
         {/* Partea de jos: ajutor și contul conectat (numele vine de la server, din /users/me). */}
         <div className="flex flex-col gap-[22px]">
-          {/* „Ajutor și regulament” — inactiv până la implementarea secțiunii. */}
-          <span
-            aria-disabled="true"
-            title={COMING_SOON}
-            className="flex cursor-not-allowed items-center gap-[10px] px-3 text-xs text-[#a8bec5]"
+          {/* „Ajutor și regulament”: legătură mică, ca în Figma; albă când pagina e deschisă. */}
+          <NavLink
+            to={`/admin/${adminHelpSection.path}`}
+            className={({ isActive }) =>
+              `flex items-center gap-[10px] px-3 text-xs ${isActive ? "font-semibold text-white" : "text-[#a8bec5] hover:text-white"}`
+            }
           >
             <adminHelpSection.Icon className="size-[17px]" />
             {adminHelpSection.label}
-          </span>
+          </NavLink>
           <div className="h-px bg-[#2a4049]" />
           <div className="flex items-center gap-[10px] px-1.5">
             <span className="grid size-[34px] shrink-0 place-items-center rounded-full bg-[#314b55] text-[11px] font-bold text-white">
@@ -182,7 +183,7 @@ export default function AdminLayout() {
           <nav aria-label="Cale de navigare" className="flex items-center gap-[10px] text-xs whitespace-nowrap">
             <span className="hidden text-muted sm:inline">Consolă operațională</span>
             <span className="hidden text-muted sm:inline">/</span>
-            <span className="font-semibold text-heading">{current?.label ?? "Administrare"}</span>
+            <span className="font-semibold text-heading">{current?.crumb ?? current?.label ?? "Administrare"}</span>
           </nav>
           <div className="flex items-center gap-5">
             <span className="hidden text-xs text-muted md:inline">{formatLongDate(todayInBucharest())}</span>

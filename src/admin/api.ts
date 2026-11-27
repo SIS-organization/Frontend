@@ -1243,3 +1243,59 @@ export async function updateUserAccess(id: string, status: "active" | "suspended
   if (confirmed !== status) throw new Error("Serverul nu a confirmat schimbarea accesului. Reîncarcă profilul.");
   return confirmed;
 }
+
+// ===========================================================================
+// Regulamentul platformei — GET /rules (public; pagina „Ajutor și regulament”)
+// ===========================================================================
+
+/** O regulă (`code` = numărul afișat, ex. „01”). */
+export type PlatformRule = { code: string; title: string; description: string };
+
+/** Valorile pe care se bazează regulile (toate opționale în contract). */
+export type RuleParameters = {
+  slotDurationMinutes: number | null;
+  monthlyIncludedBookings: number | null;
+  minCancellationNoticeHours: number | null;
+  reminderLeadHours: number | null;
+  timezone: string | null;
+};
+
+export type PlatformRules = { version: string | null; rules: PlatformRule[]; parameters: RuleParameters };
+
+/** Cel mult atâtea reguli afișăm (protecție la un răspuns neașteptat de mare). */
+const MAX_RULES = 50;
+
+/** Un număr întreg pozitiv rezonabil sau null. */
+function positiveInt(value: unknown, max: number): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 && value <= max ? value : null;
+}
+
+/** GET /rules — regulile verificate; cele fără titlu sau descriere sunt ignorate. */
+export async function getRules(signal?: AbortSignal): Promise<PlatformRules> {
+  const raw = await apiRequest<unknown>("/rules", "GET", undefined, {}, { signal });
+  if (!isObject(raw)) throw new Error("Răspuns invalid pentru regulament.");
+  const rules = list(raw.rules)
+    .slice(0, MAX_RULES)
+    .map((item): PlatformRule | null => {
+      if (!isObject(item)) return null;
+      const title = text(item.title);
+      const description = text(item.description);
+      if (!title || !description) return null;
+      const code = text(item.code);
+      return { code: code && code.length <= 8 ? code : "", title, description };
+    })
+    .filter((r): r is PlatformRule => r !== null);
+  const p = isObject(raw.parameters) ? raw.parameters : {};
+  const version = text(raw.version);
+  return {
+    version: version && version.length <= 32 ? version : null,
+    rules,
+    parameters: {
+      slotDurationMinutes: positiveInt(p.slotDurationMinutes, 24 * 60),
+      monthlyIncludedBookings: positiveInt(p.monthlyIncludedBookings, 1000),
+      minCancellationNoticeHours: positiveInt(p.minCancellationNoticeHours, 24 * 30),
+      reminderLeadHours: positiveInt(p.reminderLeadHours, 24 * 30),
+      timezone: text(p.timezone),
+    },
+  };
+}

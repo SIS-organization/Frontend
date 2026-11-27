@@ -258,7 +258,56 @@ function listFacilities(path: string): FacilityListResponse {
   };
 }
 
+/**
+ * GET /rules — regulamentul platformei (public; aceleași texte ca în Figma „Ajutor și regulament”).
+ * `parameters` sunt valorile pe care se bazează regulile (durata unui interval, cota lunară etc.).
+ */
+const RULES = {
+  version: "2026-10",
+  rules: [
+    {
+      code: "01",
+      title: "Identitate și acces",
+      description:
+        "SSO verifică apartenența la USV. Studenții și cadrele didactice au prioritate; publicul extern vede intervalele eligibile rămase.",
+    },
+    {
+      code: "02",
+      title: "Disponibilitate și capacitate",
+      description:
+        "Rezervarea se face pe un interval disponibil. Bazinul are 4 culoare: câte o rezervare pe culoar, cu maximum 4 rezervări simultane de o oră.",
+    },
+    {
+      code: "03",
+      title: "Anulare de către utilizator",
+      description: "Anularea este permisă cu cel puțin 2 ore înainte. Intervalul sau culoarul rezervat devine din nou disponibil.",
+    },
+    {
+      code: "04",
+      title: "Prioritate universitară",
+      description: "Cursurile și evenimentele blochează intervalele. Conflictele se revizuiesc înainte de publicare.",
+    },
+    {
+      code: "05",
+      title: "Mentenanță și deblocare",
+      description:
+        "Închiderea anulează rezervările afectate și notifică utilizatorii. Redeschiderea se face numai după confirmarea siguranței.",
+    },
+  ],
+  parameters: {
+    slotDurationMinutes: 60,
+    monthlyIncludedBookings: 4,
+    minCancellationNoticeHours: 2,
+    reminderLeadHours: 24,
+    timezone: "Europe/Bucharest",
+  },
+};
+
 export function mockApiHandler(path: string, method: "GET" | "POST" | "PATCH", body?: unknown) {
+  if (path === "/rules" && method === "GET") {
+    return { success: true, data: RULES };
+  }
+
   if (path.startsWith("/users/me/quota") && method === "GET") {
     return {
       success: true,

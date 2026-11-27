@@ -13,6 +13,8 @@ export type AdminSection = {
   path: string;
   /** Textul din meniu și din „Consolă operațională / …”. */
   label: string;
+  /** Textul din „Consolă operațională / …”, dacă e mai scurt decât cel din meniu (ex. „Ajutor”). */
+  crumb?: string;
   Icon: ComponentType<SVGProps<SVGSVGElement>>;
   /**
    * true = secțiunea are pagină și poate fi deschisă.
@@ -22,7 +24,7 @@ export type AdminSection = {
 };
 
 // Meniul din stânga, în ordinea din Figma („Administrare · Baza sportivă”).
-// Momentan sunt implementate „Orar și incidente”, „Rezervări” și „Utilizatori”.
+// Momentan sunt implementate „Orar și incidente”, „Rezervări”, „Utilizatori” și „Ajutor și regulament”.
 export const adminSections: AdminSection[] = [
   { path: "orar", label: "Orar și incidente", Icon: CalendarRangeIcon, ready: true },
   { path: "rezervari", label: "Rezervări", Icon: ClipboardListIcon, ready: true },
@@ -32,12 +34,13 @@ export const adminSections: AdminSection[] = [
   { path: "cont", label: "Cont și preferințe", Icon: ShieldCheckIcon, ready: false },
 ];
 
-// Legătura din partea de jos a meniului (tot inactivă deocamdată).
+// Legătura din partea de jos a meniului: „Ajutor și regulament” (/admin/ajutor).
 export const adminHelpSection: AdminSection = {
   path: "ajutor",
   label: "Ajutor și regulament",
+  crumb: "Ajutor",
   Icon: CircleHelpIcon,
-  ready: false,
+  ready: true,
 };
 
 export const allAdminSections = [...adminSections, adminHelpSection];
