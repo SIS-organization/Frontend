@@ -41,9 +41,9 @@ const CATEGORIES: { param: string; role: UserRole; label: string; plural: string
 
 /** Stările de acces din filtru: valoarea din adresă → valoarea din contract și eticheta. */
 const ACCESS: { param: string; value: AccessStatus; label: string }[] = [
-  { param: "activ", value: "active", label: "activ" },
-  { param: "suspendat", value: "suspended", label: "suspendat" },
-  { param: "neconfirmat", value: "unverified", label: "neconfirmat" },
+  { param: "activ", value: "active", label: "Activ" },
+  { param: "suspendat", value: "suspended", label: "Suspendat" },
+  { param: "neconfirmat", value: "unverified", label: "Neconfirmat" },
 ];
 
 /** Eticheta categoriei în tabel. */
@@ -212,10 +212,11 @@ export default function AdminUsersPage() {
             Categorie
           </label>
           <Select id="users-category" value={category?.param ?? ""} onChange={(e) => setFilters({ categorie: e.target.value || null })}>
-            <option value="">Categorie: toate</option>
+            {/* Opțiunile arată doar categoria; prima spune ce filtrează, ca selectul închis să fie clar. */}
+            <option value="">Toate categoriile</option>
             {CATEGORIES.map((c) => (
               <option key={c.param} value={c.param}>
-                Categorie: {c.plural.toLowerCase()}
+                {c.plural}
               </option>
             ))}
           </Select>
@@ -225,10 +226,11 @@ export default function AdminUsersPage() {
             Acces
           </label>
           <Select id="users-access" value={access?.param ?? ""} onChange={(e) => setFilters({ acces: e.target.value || null })}>
-            <option value="">Acces: toate stările</option>
+            {/* Opțiunile arată doar starea; prima spune ce filtrează, ca selectul închis să fie clar. */}
+            <option value="">Toate stările de acces</option>
             {ACCESS.map((a) => (
               <option key={a.param} value={a.param}>
-                Acces: {a.label}
+                {a.label}
               </option>
             ))}
           </Select>
